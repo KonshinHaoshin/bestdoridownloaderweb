@@ -27,10 +27,14 @@ function App() {
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
   const costumeByAsset = useMemo(() => {
-    const m = new Map<string, string[]>();
+    const m = new Map<string, { description: string[]; thumbUrl: string }>();
     if (!costumeMap) return m;
-    Object.values(costumeMap).forEach((c) => {
-      if (c?.assetBundleName) m.set(c.assetBundleName, c.description || []);
+    Object.entries(costumeMap).forEach(([id, c]) => {
+      if (!c?.assetBundleName) return;
+      const costumeId = Number(id);
+      const group = Number.isFinite(costumeId) ? Math.floor(costumeId / 50) : 0;
+      const thumbUrl = `/bestdori-assets/jp/thumb/costume/group${group}_rip/${c.assetBundleName}.png`;
+      m.set(c.assetBundleName, { description: c.description || [], thumbUrl });
     });
     return m;
   }, [costumeMap]);
@@ -79,7 +83,7 @@ function App() {
       const charaId = String(parseInt(model.slice(0, 3), 10));
       const chara = roster[charaId];
       const names = [...(chara?.characterName || []), ...((chara?.nickname || []).filter(Boolean) as string[])];
-      const costumeNames = costumeByAsset.get(model) || [];
+      const costumeNames = costumeByAsset.get(model)?.description || [];
       const searchable = [
         model,
         ...names,
@@ -295,9 +299,9 @@ function App() {
                       <div className={`w-2.5 h-2.5 rounded-full shrink-0 transition-colors ${isPreviewing ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]' : 'bg-slate-700'}`} />
                       <div className="min-w-0">
                         <span className="font-semibold truncate block">{costume}</span>
-                        {!isSelected && (costumeByAsset.get(costume)?.[3] || costumeByAsset.get(costume)?.[0]) && (
+                        {!isSelected && (costumeByAsset.get(costume)?.description?.[3] || costumeByAsset.get(costume)?.description?.[0]) && (
                           <span className="text-[10px] text-slate-500 truncate block">
-                            {costumeByAsset.get(costume)?.[3] || costumeByAsset.get(costume)?.[0]}
+                            {costumeByAsset.get(costume)?.description?.[3] || costumeByAsset.get(costume)?.description?.[0]}
                           </span>
                         )}
                         {isSelected && size !== undefined && (
@@ -308,6 +312,17 @@ function App() {
 
                     {/* Right: buttons */}
                     <div className="flex gap-1.5 shrink-0">
+                      {costumeByAsset.get(costume)?.thumbUrl && (
+                        <img
+                          src={costumeByAsset.get(costume)!.thumbUrl}
+                          alt={costume}
+                          className="w-11 h-11 rounded-lg object-cover border border-white/10 bg-white/[0.03]"
+                          loading="lazy"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      )}
                       <button
                         onClick={() => handlePreview(costume)}
                         title={isPreviewing ? '关闭预览' : '预览'}
