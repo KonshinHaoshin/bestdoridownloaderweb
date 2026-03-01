@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { BuildData, CharaRoster } from '../types';
+import { BuildData, CharaRoster, CostumeMap } from '../types';
 import { bundleAssetUrl } from '../utils/assets';
 
 const API_BASE = '/bestdori-api';
@@ -12,6 +12,11 @@ export const fetchCharaRoster = async (): Promise<CharaRoster> => {
 
 export const fetchAssetsIndex = async (): Promise<any> => {
   const response = await axios.get(`${API_BASE}/explorer/jp/assets/_info.json`);
+  return response.data;
+};
+
+export const fetchCostumes = async (): Promise<CostumeMap> => {
+  const response = await axios.get(`${API_BASE}/costumes/all.5.json`);
   return response.data;
 };
 
