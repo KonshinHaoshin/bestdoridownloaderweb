@@ -36,3 +36,11 @@ export interface CharacterInfo {
 }
 
 export type CharaRoster = Record<string, CharacterInfo>;
+
+export interface CostumeInfo {
+  characterId: number;
+  assetBundleName: string;
+  description?: string[];
+}
+
+export type CostumeMap = Record<string, CostumeInfo>;

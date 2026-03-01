@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount } from './api/bestdori';
-import { CharaRoster, BuildData } from './types';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes } from './api/bestdori';
+import { CharaRoster, BuildData, CostumeMap } from './types';
 import Live2dPreview from './components/Live2dPreview';
 import { downloadModelsAsZip } from './utils/zip';
 import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox } from 'lucide-react';
@@ -8,6 +8,7 @@ import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, 
 function App() {
   const [roster, setRoster] = useState<CharaRoster | null>(null);
   const [assetsIndex, setAssetsIndex] = useState<any>(null);
+  const [costumeMap, setCostumeMap] = useState<CostumeMap | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [costumes, setCostumes] = useState<string[]>([]);
   const [matchedCharaName, setMatchedCharaName] = useState('');
@@ -25,6 +26,14 @@ function App() {
 
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
+  const costumeByAsset = useMemo(() => {
+    const m = new Map<string, string[]>();
+    if (!costumeMap) return m;
+    Object.values(costumeMap).forEach((c) => {
+      if (c?.assetBundleName) m.set(c.assetBundleName, c.description || []);
+    });
+    return m;
+  }, [costumeMap]);
 
   const getCachedBuildData = async (name: string): Promise<BuildData> => {
     const cached = buildDataCache.current.get(name);
@@ -39,7 +48,7 @@ function App() {
     initDone.current = true;
     (async () => {
       try {
-        const [r, a] = await Promise.all([fetchCharaRoster(), fetchAssetsIndex()]);
+        const [r, a, c] = await Promise.all([fetchCharaRoster(), fetchAssetsIndex(), fetchCostumes()]);
         const custom: CharaRoster = {
           '337': { characterType: 'common', characterName: ['三角 初華', 'Uika Misumi', '三角 初華', '三角 初华'], nickname: [null, null, null, null, null] },
           '338': { characterType: 'common', characterName: ['若葉 睦', 'Mutsumi Wakaba', '若葉 睦', '若叶 睦'], nickname: [null, null, null, null, null] },
@@ -49,6 +58,7 @@ function App() {
         };
         setRoster({ ...r, ...custom });
         setAssetsIndex(a);
+        setCostumeMap(c);
       } catch (e) {
         console.error('Init failed:', e);
       }
@@ -62,35 +72,58 @@ function App() {
     const term = searchTerm.trim().toLowerCase();
     if (!term) return;
 
-    const matched = Object.entries(roster).find(([, info]) => {
-      const allNames = [
-        ...info.characterName,
-        ...(info.nickname || []),
+    const assets = assetsIndex?.live2d?.chara || {};
+    const models = Object.keys(assets).filter((n) => !n.endsWith('general'));
+
+    const candidates = models.map((model) => {
+      const charaId = String(parseInt(model.slice(0, 3), 10));
+      const chara = roster[charaId];
+      const names = [...(chara?.characterName || []), ...((chara?.nickname || []).filter(Boolean) as string[])];
+      const costumeNames = costumeByAsset.get(model) || [];
+      const searchable = [
+        model,
+        ...names,
+        ...costumeNames,
+        ...costumeNames.map((c) => `${names[0] || ''} ${c}`),
       ]
         .filter(Boolean)
-        .map((n) => (n as string).toLowerCase());
-
-      return allNames.some((n) => n.includes(term) || term.includes(n));
+        .join(' | ')
+        .toLowerCase();
+      return { model, charaId, names, costumeNames, searchable };
     });
 
-    if (matched) {
-      setMatchedCharaName(matched[1].characterName[0] || '');
-      const prefix = matched[0].padStart(3, '0');
-      const assets = assetsIndex?.live2d?.chara || {};
-      const filtered = Object.keys(assets).filter((n) => n.startsWith(prefix) && !n.endsWith('general'));
-      setCostumes(filtered);
+    const matched = candidates.filter((c) => c.searchable.includes(term) || term.includes(c.model.toLowerCase()));
+    if (matched.length === 0) {
+      setMatchedCharaName('');
+      setCostumes([]);
       setPreviewCostume(null);
       setPreviewBuildData(null);
-
-      // Pre-fetch all buildData in background so buttons respond instantly
-      filtered.forEach((name) => {
-        if (!buildDataCache.current.has(name)) {
-          fetchBuildData(name)
-            .then((data) => buildDataCache.current.set(name, data))
-            .catch(() => {});
-        }
-      });
+      return;
     }
+
+    const first = matched[0];
+    const charaOnlyHit = first.names.some((n) => n.toLowerCase().includes(term) || term.includes(n.toLowerCase()));
+    const sameCharaMatched = matched.filter((m) => m.charaId === first.charaId);
+    const target =
+      charaOnlyHit
+        ? models.filter((n) => n.startsWith(first.model.slice(0, 3)) && !n.endsWith('general'))
+        : sameCharaMatched.map((m) => m.model);
+
+    const uniqueTarget = Array.from(new Set(target)).sort();
+    const label = first.names[0] || first.model.slice(0, 3);
+    setMatchedCharaName(charaOnlyHit ? label : `${label}（匹配 ${uniqueTarget.length} 套）`);
+    setCostumes(uniqueTarget);
+    setPreviewCostume(null);
+    setPreviewBuildData(null);
+
+    // Pre-fetch all buildData in background so buttons respond instantly
+    uniqueTarget.forEach((name) => {
+      if (!buildDataCache.current.has(name)) {
+        fetchBuildData(name)
+          .then((data) => buildDataCache.current.set(name, data))
+          .catch(() => {});
+      }
+    });
   };
 
   // Toggle preview
@@ -206,7 +239,7 @@ function App() {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-600" />
             <input
               type="text"
-              placeholder="输入角色名 (如: 爱音, 祥子)"
+              placeholder="输入角色或服装名 (如: 爱音, ひみつの作戦会議)"
               className="w-full pl-12 pr-4 py-4 rounded-2xl bg-white/[0.04] border border-white/[0.08] focus:border-cyan-500/40 focus:ring-1 focus:ring-cyan-500/30 outline-none text-lg placeholder:text-slate-600 transition-all"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -262,6 +295,11 @@ function App() {
                       <div className={`w-2.5 h-2.5 rounded-full shrink-0 transition-colors ${isPreviewing ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]' : 'bg-slate-700'}`} />
                       <div className="min-w-0">
                         <span className="font-semibold truncate block">{costume}</span>
+                        {!isSelected && (costumeByAsset.get(costume)?.[3] || costumeByAsset.get(costume)?.[0]) && (
+                          <span className="text-[10px] text-slate-500 truncate block">
+                            {costumeByAsset.get(costume)?.[3] || costumeByAsset.get(costume)?.[0]}
+                          </span>
+                        )}
                         {isSelected && size !== undefined && (
                           <span className="text-[10px] text-slate-500 font-mono">{formatSize(size)}</span>
                         )}
