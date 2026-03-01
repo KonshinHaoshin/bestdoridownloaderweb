@@ -33,7 +33,7 @@ importers:
         specifier: ^0.4.0
         version: 0.4.0(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/loaders@6.5.10(@pixi/constants@7.4.3)(@pixi/core@7.4.3)(@pixi/utils@7.4.3))(@pixi/math@7.4.3)(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/utils@7.4.3)
       pixi.js:
-        specifier: ^7.0.0
+        specifier: ^7.3.2
         version: 7.4.3
       react:
         specifier: ^18.2.0
