@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { BuildData, CharaRoster } from '../types';
+import { bundleAssetUrl } from '../utils/assets';
 
 const API_BASE = '/bestdori-api';
 const ASSETS_BASE = '/bestdori-assets';
@@ -24,20 +25,21 @@ export const getFileCount = (data: BuildData): number => {
   return 1 + 1 + data.textures.length + data.motions.length + data.expressions.length;
 };
 
-export const fetchModelSize = async (modelName: string, data: BuildData): Promise<number> => {
-  const baseUrl = `/bestdori-assets/jp/live2d/chara/${modelName}_rip/`;
-  const fileNames = [
-    data.model.fileName,
-    data.physics.fileName,
-    ...data.textures.map((t) => t.fileName),
-    ...data.motions.map((m) => m.fileName),
-    ...data.expressions.map((e) => e.fileName),
+export const fetchModelSize = async (data: BuildData): Promise<number> => {
+  const urls = [
+    bundleAssetUrl(data.model, 'model'),
+    bundleAssetUrl(data.physics, 'physics'),
+    ...data.textures.map((t) => bundleAssetUrl(t, 'texture')),
+    ...data.motions.map((m) => bundleAssetUrl(m, 'motion')),
+    ...data.expressions.map((e) => bundleAssetUrl(e, 'expression')),
   ];
 
   const sizes = await Promise.all(
-    fileNames.map(async (f) => {
+    urls.map(async (url) => {
       try {
-        const resp = await axios.head(`${baseUrl}${f}`);
+        const resp = await axios.head(url);
+        const contentType = String(resp.headers['content-type'] || '');
+        if (contentType.startsWith('text/html')) return 0;
         const len = resp.headers['content-length'];
         return len ? parseInt(len, 10) : 0;
       } catch {
