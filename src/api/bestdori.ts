@@ -1,27 +1,25 @@
 import axios from 'axios';
 import { BuildData, CharaRoster, CostumeMap } from '../types';
+import { getApiBase, getAssetsBase } from '../config';
 import { bundleAssetUrl } from '../utils/assets';
 
-const API_BASE = '/bestdori-api';
-const ASSETS_BASE = '/bestdori-assets';
-
 export const fetchCharaRoster = async (): Promise<CharaRoster> => {
-  const response = await axios.get(`${API_BASE}/characters/all.2.json`);
+  const response = await axios.get(`${getApiBase()}/characters/all.2.json`);
   return response.data;
 };
 
 export const fetchAssetsIndex = async (): Promise<any> => {
-  const response = await axios.get(`${API_BASE}/explorer/jp/assets/_info.json`);
+  const response = await axios.get(`${getApiBase()}/explorer/jp/assets/_info.json`);
   return response.data;
 };
 
 export const fetchCostumes = async (): Promise<CostumeMap> => {
-  const response = await axios.get(`${API_BASE}/costumes/all.5.json`);
+  const response = await axios.get(`${getApiBase()}/costumes/all.5.json`);
   return response.data;
 };
 
 export const fetchBuildData = async (modelName: string): Promise<BuildData> => {
-  const url = `${ASSETS_BASE}/jp/live2d/chara/${modelName}_rip/buildData.asset`;
+  const url = `${getAssetsBase()}/jp/live2d/chara/${modelName}_rip/buildData.asset`;
   const response = await axios.get(url);
   return response.data.Base;
 };

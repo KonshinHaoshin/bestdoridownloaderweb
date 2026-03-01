@@ -24,6 +24,11 @@ pnpm dev
 - 输入服装名/关键词：仅显示匹配的模型
 - 服装数据来源：`/bestdori-api/costumes/all.5.json`
 
+## 部署（Vercel）
+
+- 项目根目录的 `.env.production` 已配置 `VITE_BESTDORI_BASE=https://live2d.shelter.net.cn`，在 Vercel 上构建时会自动生效，线上请求会走该 Worker 域名。
+- 若需改用其他代理域名，可在 Vercel 项目 **Settings → Environment Variables** 中设置 `VITE_BESTDORI_BASE`（会覆盖 `.env.production`）。
+
 ## 文档
 
 - 服装名搜索规则：[`docs/SEARCH.md`](./docs/SEARCH.md)
