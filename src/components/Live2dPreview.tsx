@@ -109,7 +109,14 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
     return () => {
       destroyedRef.current = true;
       if (appRef.current) {
-        appRef.current.destroy(true, { children: true, texture: true, baseTexture: true });
+        // Manually remove all children before destroying to avoid
+        // pixi-live2d-display crash on InteractionManager.off
+        try {
+          appRef.current.stage.removeChildren();
+        } catch {}
+        try {
+          appRef.current.destroy(true, { children: true, texture: true, baseTexture: true });
+        } catch {}
         appRef.current = null;
       }
       while (container.firstChild) {
