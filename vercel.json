@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/bestdori-api/:path*",
+      "destination": "https://bestdori.com/api/:path*"
+    },
+    {
+      "source": "/bestdori-assets/:path*",
+      "destination": "https://bestdori.com/assets/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
