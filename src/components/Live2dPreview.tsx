@@ -2,6 +2,7 @@ import { useEffect, useRef, FC, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display/cubism2';
 import { BuildData } from '../types';
+import { getAssetsBase } from '../config';
 import { bundleAssetUrl } from '../utils/assets';
 
 interface Live2dPreviewProps {
@@ -97,7 +98,7 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
 
         const modelSettings: any = {
           // Keep a URL base even though entries are absolute paths.
-          url: `/bestdori-assets/jp/live2d/chara/${modelName}_rip/buildData.asset`,
+          url: `${getAssetsBase()}/jp/live2d/chara/${modelName}_rip/buildData.asset`,
           // Remote preview serves moc/mtn as extensionless files.
           model: modelUrl,
           textures: resolvedTextureUrls,

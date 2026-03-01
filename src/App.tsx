@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes } from './api/bestdori';
 import { CharaRoster, BuildData, CostumeMap } from './types';
 import Live2dPreview from './components/Live2dPreview';
+import { getAssetsBase, getInitialBestdoriBase, setBestdoriBase, BESTDORI_WORKER_URL } from './config';
 import { downloadModelsAsZip } from './utils/zip';
-import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox } from 'lucide-react';
+import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Globe, Server } from 'lucide-react';
 
 function App() {
   const [roster, setRoster] = useState<CharaRoster | null>(null);
@@ -24,20 +25,24 @@ function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState('');
 
+  // 直连 / 反代（持久化到 localStorage）
+  const [bestdoriBase, setBestdoriBaseState] = useState(() => getInitialBestdoriBase());
+
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
   const costumeByAsset = useMemo(() => {
     const m = new Map<string, { description: string[]; thumbUrl: string }>();
     if (!costumeMap) return m;
+    const assetsBase = getAssetsBase();
     Object.entries(costumeMap).forEach(([id, c]) => {
       if (!c?.assetBundleName) return;
       const costumeId = Number(id);
       const group = Number.isFinite(costumeId) ? Math.floor(costumeId / 50) : 0;
-      const thumbUrl = `/bestdori-assets/jp/thumb/costume/group${group}_rip/${c.assetBundleName}.png`;
+      const thumbUrl = `${assetsBase}/jp/thumb/costume/group${group}_rip/${c.assetBundleName}.png`;
       m.set(c.assetBundleName, { description: c.description || [], thumbUrl });
     });
     return m;
-  }, [costumeMap]);
+  }, [costumeMap, bestdoriBase]);
 
   const getCachedBuildData = async (name: string): Promise<BuildData> => {
     const cached = buildDataCache.current.get(name);
@@ -69,12 +74,17 @@ function App() {
     })();
   }, []);
 
+  /** 搜索时忽略空格，便于「椎名立希」匹配「椎名 立希」、以及部分名「立希」匹配 */
+  const normalizeForSearch = (s: string) => s.replace(/\s+/g, '').toLowerCase();
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!roster) return;
 
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) return;
+    const rawTerm = searchTerm.trim();
+    if (!rawTerm) return;
+    const term = rawTerm.toLowerCase();
+    const termNorm = normalizeForSearch(rawTerm);
 
     const assets = assetsIndex?.live2d?.chara || {};
     const models = Object.keys(assets).filter((n) => !n.endsWith('general'));
@@ -93,10 +103,17 @@ function App() {
         .filter(Boolean)
         .join(' | ')
         .toLowerCase();
-      return { model, charaId, names, costumeNames, searchable };
+      const searchableNorm = normalizeForSearch(searchable);
+      return { model, charaId, names, costumeNames, searchable, searchableNorm };
     });
 
-    const matched = candidates.filter((c) => c.searchable.includes(term) || term.includes(c.model.toLowerCase()));
+    const matched = candidates.filter(
+      (c) =>
+        c.searchable.includes(term) ||
+        c.searchableNorm.includes(termNorm) ||
+        term.includes(c.model.toLowerCase()) ||
+        termNorm.includes(normalizeForSearch(c.model))
+    );
     if (matched.length === 0) {
       setMatchedCharaName('');
       setCostumes([]);
@@ -106,7 +123,14 @@ function App() {
     }
 
     const first = matched[0];
-    const charaOnlyHit = first.names.some((n) => n.toLowerCase().includes(term) || term.includes(n.toLowerCase()));
+    const charaOnlyHit = first.names.some(
+      (n) =>
+        n &&
+        (n.toLowerCase().includes(term) ||
+          term.includes(n.toLowerCase()) ||
+          normalizeForSearch(n).includes(termNorm) ||
+          termNorm.includes(normalizeForSearch(n)))
+    );
     const sameCharaMatched = matched.filter((m) => m.charaId === first.charaId);
     const target =
       charaOnlyHit
@@ -201,7 +225,7 @@ function App() {
     setDownloadProgress('准备中…');
     try {
       await downloadModelsAsZip(selectedMap, (cur, total) => {
-        setDownloadProgress(`${cur} / ${total} 模型已打包`);
+        setDownloadProgress(`${cur} / ${total} 个已下载`);
       });
     } catch (e) {
       console.error('Download failed:', e);
@@ -231,9 +255,43 @@ function App() {
             Live2D Explorer
           </h1>
         </div>
-        <p className="text-slate-500 text-base tracking-wide">
+        <p className="text-slate-500 text-base tracking-wide mb-4">
           搜索、预览、打包下载 BanG Dream! Live2D 模型
         </p>
+        <div className="inline-flex rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 gap-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              setBestdoriBase('');
+              setBestdoriBaseState('');
+            }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              !bestdoriBase
+                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+            }`}
+            title="直连 Bestdori（依赖当前站点代理或 CORS）"
+          >
+            <Globe className="w-4 h-4" />
+            直连
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setBestdoriBase(BESTDORI_WORKER_URL);
+              setBestdoriBaseState(BESTDORI_WORKER_URL);
+            }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              bestdoriBase
+                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
+            }`}
+            title="通过反代节点请求（推荐，避免 CORS）"
+          >
+            <Server className="w-4 h-4" />
+            反代
+          </button>
+        </div>
       </header>
 
       {/* Search */}
@@ -415,7 +473,7 @@ function App() {
                   </div>
                   <div>
                     <h3 className="text-lg font-bold">下载队列</h3>
-                    <p className="text-slate-500 text-sm">支持多选，所有模型将打包到一个 ZIP</p>
+                    <p className="text-slate-500 text-sm">支持多选，每个模型将单独下载为一个 ZIP</p>
                   </div>
                 </div>
                 {selectedCount > 0 && (
@@ -471,7 +529,7 @@ function App() {
                     className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 font-black text-lg flex items-center justify-center gap-3 hover:shadow-lg hover:shadow-blue-600/25 disabled:opacity-50 active:scale-[0.98] transition-all"
                   >
                     {isDownloading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Download className="w-6 h-6" />}
-                    {isDownloading ? downloadProgress || '打包中…' : `打包下载 ${selectedCount} 个模型 (.ZIP)`}
+                    {isDownloading ? downloadProgress || '下载中…' : `下载 ${selectedCount} 个模型（各为独立 ZIP）`}
                   </button>
                 </div>
               ) : (

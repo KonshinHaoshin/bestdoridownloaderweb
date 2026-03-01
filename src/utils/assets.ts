@@ -1,4 +1,5 @@
 import { BundleFile } from '../types';
+import { getAssetsBase } from '../config';
 
 const stripBytesSuffix = (fileName: string) => fileName.replace(/\.bytes$/, '');
 const ensurePngSuffix = (fileName: string) => (fileName.includes('.') ? fileName : `${fileName}.png`);
@@ -18,5 +19,5 @@ export const bundleAssetUrl = (
   if (kind === 'model') fileName = normalizeModelFileName(fileName);
   if (kind === 'motion') fileName = normalizeMotionFileName(fileName);
   if (kind === 'texture') fileName = normalizeTextureFileName(fileName);
-  return `/bestdori-assets/jp/${file.bundleName}_rip/${fileName}`;
+  return `${getAssetsBase()}/jp/${file.bundleName}_rip/${fileName}`;
 };

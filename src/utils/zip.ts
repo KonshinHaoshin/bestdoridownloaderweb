@@ -95,22 +95,20 @@ const addModelToZip = async (zip: JSZip, modelName: string, buildData: BuildData
   rootFolder.file('model.json', JSON.stringify(modelJson, null, 2));
 };
 
+/** 将选中的多个模型分别打成多个 ZIP，逐个下载（与单选行为一致） */
 export const downloadModelsAsZip = async (
   models: Map<string, BuildData>,
   onProgress?: (current: number, total: number) => void
 ) => {
-  const zip = new JSZip();
   const entries = Array.from(models.entries());
   let done = 0;
 
   for (const [name, data] of entries) {
+    const zip = new JSZip();
     await addModelToZip(zip, name, data);
+    const content = await zip.generateAsync({ type: 'blob' });
+    saveAs(content, `${name}.zip`);
     done++;
     onProgress?.(done, entries.length);
   }
-
-  const content = await zip.generateAsync({ type: 'blob' });
-
-  const zipName = entries.length === 1 ? `${entries[0][0]}.zip` : `live2d_models_${entries.length}.zip`;
-  saveAs(content, zipName);
 };
