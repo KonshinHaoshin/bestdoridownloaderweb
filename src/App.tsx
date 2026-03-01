@@ -24,6 +24,15 @@ function App() {
   const [downloadProgress, setDownloadProgress] = useState('');
 
   const initDone = useRef(false);
+  const buildDataCache = useRef<Map<string, BuildData>>(new Map());
+
+  const getCachedBuildData = async (name: string): Promise<BuildData> => {
+    const cached = buildDataCache.current.get(name);
+    if (cached) return cached;
+    const data = await fetchBuildData(name);
+    buildDataCache.current.set(name, data);
+    return data;
+  };
 
   useEffect(() => {
     if (initDone.current) return;
@@ -49,9 +58,21 @@ function App() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!roster) return;
-    const matched = Object.entries(roster).find(([, info]) =>
-      info.characterName.some((n) => n?.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return;
+
+    const matched = Object.entries(roster).find(([, info]) => {
+      const allNames = [
+        ...info.characterName,
+        ...(info.nickname || []),
+      ]
+        .filter(Boolean)
+        .map((n) => (n as string).toLowerCase());
+
+      return allNames.some((n) => n.includes(term) || term.includes(n));
+    });
+
     if (matched) {
       setMatchedCharaName(matched[1].characterName[0] || '');
       const prefix = matched[0].padStart(3, '0');
@@ -73,7 +94,7 @@ function App() {
     }
     setIsPreviewLoading(true);
     try {
-      const data = await fetchBuildData(name);
+      const data = await getCachedBuildData(name);
       setPreviewBuildData(data);
       setPreviewCostume(name);
     } catch (e) {
@@ -99,15 +120,17 @@ function App() {
       return;
     }
     try {
-      const data = await fetchBuildData(name);
+      const data = await getCachedBuildData(name);
       setSelectedMap((prev) => new Map(prev).set(name, data));
-      fetchModelSize(name, data).then((size) => {
-        setModelSizes((prev) => new Map(prev).set(name, size));
-      });
+      if (!modelSizes.has(name)) {
+        fetchModelSize(name, data).then((size) => {
+          setModelSizes((prev) => new Map(prev).set(name, size));
+        });
+      }
     } catch (e) {
       console.error('Select failed:', e);
     }
-  }, [selectedMap]);
+  }, [selectedMap, modelSizes]);
 
   const handleRemoveSelected = (name: string) => {
     setSelectedMap((prev) => {
