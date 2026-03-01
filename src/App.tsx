@@ -131,7 +131,7 @@ function App() {
       const data = await getCachedBuildData(name);
       setSelectedMap((prev) => new Map(prev).set(name, data));
       if (!modelSizes.has(name)) {
-        fetchModelSize(name, data).then((size) => {
+        fetchModelSize(data).then((size) => {
           setModelSizes((prev) => new Map(prev).set(name, size));
         });
       }

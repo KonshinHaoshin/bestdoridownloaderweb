@@ -2,9 +2,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { BuildData } from '../types';
 import axios from 'axios';
-
-const removeBytesSuffix = (fileName: string) => fileName.replace(/\.bytes$/, '');
-const ensurePngSuffix = (fileName: string) => fileName.includes('.') ? fileName : `${fileName}.png`;
+import { bundleAssetUrl, normalizeMotionFileName, normalizeTextureFileName } from './assets';
 
 const addModelToZip = async (zip: JSZip, modelName: string, buildData: BuildData) => {
   const rootFolder = zip.folder(modelName);
@@ -12,17 +10,16 @@ const addModelToZip = async (zip: JSZip, modelName: string, buildData: BuildData
   const dataFolder = rootFolder.folder('data');
   if (!dataFolder) return;
 
-  const baseUrl = `/bestdori-assets/jp/live2d/chara/${modelName}_rip/`;
   const filesToDownload: { url: string; folder: JSZip; name: string }[] = [];
 
   filesToDownload.push({
-    url: `${baseUrl}${buildData.model.fileName}`,
+    url: bundleAssetUrl(buildData.model, 'model'),
     folder: dataFolder,
     name: 'model.moc'
   });
 
   filesToDownload.push({
-    url: `${baseUrl}${buildData.physics.fileName}`,
+    url: bundleAssetUrl(buildData.physics, 'physics'),
     folder: dataFolder,
     name: 'physics.json'
   });
@@ -31,9 +28,9 @@ const addModelToZip = async (zip: JSZip, modelName: string, buildData: BuildData
   if (textureFolder) {
     buildData.textures.forEach(t => {
       filesToDownload.push({
-        url: `${baseUrl}${t.fileName}`,
+        url: bundleAssetUrl(t, 'texture'),
         folder: textureFolder,
-        name: ensurePngSuffix(t.fileName)
+        name: normalizeTextureFileName(t.fileName)
       });
     });
   }
@@ -42,9 +39,9 @@ const addModelToZip = async (zip: JSZip, modelName: string, buildData: BuildData
   if (motionFolder) {
     buildData.motions.forEach(m => {
       filesToDownload.push({
-        url: `${baseUrl}${m.fileName}`,
+        url: bundleAssetUrl(m, 'motion'),
         folder: motionFolder,
-        name: removeBytesSuffix(m.fileName)
+        name: normalizeMotionFileName(m.fileName)
       });
     });
   }
@@ -53,7 +50,7 @@ const addModelToZip = async (zip: JSZip, modelName: string, buildData: BuildData
   if (expressionFolder) {
     buildData.expressions.forEach(e => {
       filesToDownload.push({
-        url: `${baseUrl}${e.fileName}`,
+        url: bundleAssetUrl(e, 'expression'),
         folder: expressionFolder,
         name: e.fileName
       });
@@ -82,10 +79,11 @@ const addModelToZip = async (zip: JSZip, modelName: string, buildData: BuildData
     },
     model: 'data/model.moc',
     physics: 'data/physics.json',
-    textures: buildData.textures.map(t => `data/textures/${ensurePngSuffix(t.fileName)}`),
+    textures: buildData.textures.map(t => `data/textures/${normalizeTextureFileName(t.fileName)}`),
     motions: buildData.motions.reduce((acc: any, m) => {
-      const name = removeBytesSuffix(m.fileName).split('/').pop()?.replace(/\.mtn$/, '') || 'motion';
-      acc[name] = [{ file: `data/motions/${removeBytesSuffix(m.fileName)}` }];
+      const normalizedFile = normalizeMotionFileName(m.fileName);
+      const name = normalizedFile.split('/').pop()?.replace(/\.mtn$/, '') || 'motion';
+      acc[name] = [{ file: `data/motions/${normalizedFile}` }];
       return acc;
     }, {}),
     expressions: buildData.expressions.map(e => ({
