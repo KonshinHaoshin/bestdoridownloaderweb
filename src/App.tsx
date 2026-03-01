@@ -77,11 +77,19 @@ function App() {
       setMatchedCharaName(matched[1].characterName[0] || '');
       const prefix = matched[0].padStart(3, '0');
       const assets = assetsIndex?.live2d?.chara || {};
-      setCostumes(
-        Object.keys(assets).filter((n) => n.startsWith(prefix) && !n.endsWith('general'))
-      );
+      const filtered = Object.keys(assets).filter((n) => n.startsWith(prefix) && !n.endsWith('general'));
+      setCostumes(filtered);
       setPreviewCostume(null);
       setPreviewBuildData(null);
+
+      // Pre-fetch all buildData in background so buttons respond instantly
+      filtered.forEach((name) => {
+        if (!buildDataCache.current.has(name)) {
+          fetchBuildData(name)
+            .then((data) => buildDataCache.current.set(name, data))
+            .catch(() => {});
+        }
+      });
     }
   };
 
