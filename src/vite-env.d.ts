@@ -3,3 +3,7 @@
 declare module 'pixi-live2d-display/cubism2' {
   export { Live2DModel } from 'pixi-live2d-display';
 }
+
+declare module 'pixi-live2d-display-webgal/cubism2' {
+  export { Live2DModel } from 'pixi-live2d-display-webgal';
+}
