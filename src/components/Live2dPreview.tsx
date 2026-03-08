@@ -1,6 +1,6 @@
-import { useEffect, useRef, FC, useState } from 'react';
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import * as PIXI from 'pixi.js';
-import { Live2DModel } from 'pixi-live2d-display/cubism2';
+import { Live2DModel } from 'pixi-live2d-display-webgal/cubism2';
 import { BuildData } from '../types';
 import { getAssetsBase } from '../config';
 import { bundleAssetUrl } from '../utils/assets';
@@ -8,6 +8,12 @@ import { bundleAssetUrl } from '../utils/assets';
 interface Live2dPreviewProps {
   modelName: string;
   buildData: BuildData;
+  selectedMotion?: string;
+  selectedExpression?: string;
+}
+
+export interface Live2dPreviewHandle {
+  copyImage: () => Promise<void>;
 }
 
 (window as any).PIXI = PIXI;
@@ -26,11 +32,26 @@ const canLoadImage = (url: string) =>
 const TRANSPARENT_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9p7fJ4sAAAAASUVORK5CYII=';
 
-const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
+const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ modelName, buildData, selectedMotion, selectedExpression }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
+  const live2dRef = useRef<any>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const destroyedRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    copyImage: async () => {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('预览尚未准备好');
+      if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+        throw new Error('当前浏览器不支持复制图片');
+      }
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('导出图片失败');
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    },
+  }), []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -65,9 +86,10 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
         preserveDrawingBuffer: true,
       });
       appRef.current = app;
-      container.appendChild(app.view as HTMLCanvasElement);
-      (app.view as HTMLCanvasElement).style.width = '100%';
-      (app.view as HTMLCanvasElement).style.height = '100%';
+      canvasRef.current = app.view as HTMLCanvasElement;
+      container.appendChild(canvasRef.current);
+      canvasRef.current.style.width = '100%';
+      canvasRef.current.style.height = '100%';
 
       if (destroyedRef.current) {
         cleanup();
@@ -108,12 +130,14 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
             acc[key] = [{ file: bundleAssetUrl(m, 'motion') }];
             return acc;
           }, {}),
-          // Bestdori expression files are inconsistent across costumes; skip to keep preview stable.
-          expressions: [],
+          expressions: buildData.expressions.map((e) => ({
+            name: e.fileName.replace(/\.exp\.json$/, ''),
+            file: bundleAssetUrl(e, 'expression'),
+          })),
         };
 
         const live2d = await (Live2DModel as any).from(modelSettings);
-        // pixi-live2d-display(0.4.x) still expects renderer.plugins.interaction.on/off,
+        // The WebGAL fork still expects renderer.plugins.interaction.on/off,
         // which is incompatible with current Pixi v7 runtime in this project.
         // Disable built-in interaction to prevent render-time crash.
         try {
@@ -121,6 +145,7 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
           live2d.interactive = false;
           if ('eventMode' in live2d) live2d.eventMode = 'none';
         } catch {}
+        live2dRef.current = live2d;
 
         if (destroyedRef.current || !appRef.current) return;
 
@@ -137,7 +162,7 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
 
         // Keep idle motion by default; tap/hit interaction is disabled by compatibility workaround.
         try {
-          live2d.motion('idle');
+          live2d.motion(selectedMotion || 'idle');
         } catch {}
       } catch (err) {
         console.error('Live2D load error:', err);
@@ -155,6 +180,8 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
         } catch {}
         app = null;
         appRef.current = null;
+        live2dRef.current = null;
+        canvasRef.current = null;
       }
       while (container.firstChild) container.removeChild(container.firstChild);
     };
@@ -167,6 +194,16 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
     };
   }, [modelName, buildData]);
 
+  useEffect(() => {
+    if (!selectedMotion || !live2dRef.current) return;
+    live2dRef.current.motion(selectedMotion).catch(() => {});
+  }, [selectedMotion]);
+
+  useEffect(() => {
+    if (!selectedExpression || !live2dRef.current) return;
+    live2dRef.current.expression(selectedExpression).catch(() => {});
+  }, [selectedExpression]);
+
   return (
     <div className="w-full h-full relative">
       <div ref={containerRef} className="w-full h-full" />
@@ -177,6 +214,8 @@ const Live2dPreview: FC<Live2dPreviewProps> = ({ modelName, buildData }) => {
       )}
     </div>
   );
-};
+});
+
+Live2dPreview.displayName = 'Live2dPreview';
 
 export default Live2dPreview;

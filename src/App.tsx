@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes } from './api/bestdori';
 import { CharaRoster, BuildData, CostumeMap } from './types';
-import Live2dPreview from './components/Live2dPreview';
+import Live2dPreview, { Live2dPreviewHandle } from './components/Live2dPreview';
 import { getAssetsBase, getInitialBestdoriBase, setBestdoriBase, BESTDORI_WORKER_URL } from './config';
 import { downloadModelsAsZip } from './utils/zip';
-import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Globe, Server } from 'lucide-react';
+import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Globe, Server, Copy } from 'lucide-react';
 
 function App() {
   const [roster, setRoster] = useState<CharaRoster | null>(null);
@@ -18,6 +18,10 @@ function App() {
   const [previewCostume, setPreviewCostume] = useState<string | null>(null);
   const [previewBuildData, setPreviewBuildData] = useState<BuildData | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [selectedMotion, setSelectedMotion] = useState('idle');
+  const [selectedExpression, setSelectedExpression] = useState('');
+  const [copyStatus, setCopyStatus] = useState('');
+  const previewRef = useRef<Live2dPreviewHandle | null>(null);
 
   // Selection (multi)
   const [selectedMap, setSelectedMap] = useState<Map<string, BuildData>>(new Map());
@@ -51,6 +55,28 @@ function App() {
     buildDataCache.current.set(name, data);
     return data;
   };
+
+  const motionOptions = useMemo(() => {
+    if (!previewBuildData) return [];
+    return Array.from(
+      new Set(
+        previewBuildData.motions.map((m) =>
+          (m.fileName.split('/').pop() || 'idle').replace(/\.bytes$/, '').replace(/\.mtn$/, '')
+        )
+      )
+    ).sort();
+  }, [previewBuildData]);
+
+  const expressionOptions = useMemo(() => {
+    if (!previewBuildData) return [];
+    return Array.from(
+      new Set(
+        previewBuildData.expressions
+          .map((e) => (e.fileName.split('/').pop() || '').replace(/\.exp\.json$/, ''))
+          .filter(Boolean)
+      )
+    ).sort();
+  }, [previewBuildData]);
 
   useEffect(() => {
     if (initDone.current) return;
@@ -159,11 +185,21 @@ function App() {
     if (previewCostume === name) {
       setPreviewCostume(null);
       setPreviewBuildData(null);
+      setSelectedMotion('idle');
+      setSelectedExpression('');
+      setCopyStatus('');
       return;
     }
     setIsPreviewLoading(true);
     try {
       const data = await getCachedBuildData(name);
+      const nextMotion =
+        data.motions
+          .map((m) => (m.fileName.split('/').pop() || 'idle').replace(/\.bytes$/, '').replace(/\.mtn$/, ''))
+          .find((m) => m === 'idle') || 'idle';
+      setSelectedMotion(nextMotion);
+      setSelectedExpression('');
+      setCopyStatus('');
       setPreviewBuildData(data);
       setPreviewCostume(name);
     } catch (e) {
@@ -172,6 +208,18 @@ function App() {
       setIsPreviewLoading(false);
     }
   }, [previewCostume]);
+
+  const handleCopyPreview = useCallback(async () => {
+    if (!previewRef.current) return;
+    try {
+      await previewRef.current.copyImage();
+      setCopyStatus('图片已复制');
+      window.setTimeout(() => setCopyStatus(''), 1800);
+    } catch (e) {
+      setCopyStatus(e instanceof Error ? e.message : '复制失败');
+      window.setTimeout(() => setCopyStatus(''), 2200);
+    }
+  }, []);
 
   // Toggle select (multi)
   const handleSelect = useCallback(async (name: string) => {
@@ -446,7 +494,52 @@ function App() {
 
                 {previewCostume && previewBuildData ? (
                   <div className="w-full h-full relative">
-                    <Live2dPreview key={previewCostume} modelName={previewCostume} buildData={previewBuildData} />
+                    <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/60 p-2 backdrop-blur">
+                      <select
+                        value={selectedMotion}
+                        onChange={(e) => setSelectedMotion(e.target.value)}
+                        className="min-w-[160px] flex-1 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-slate-100 outline-none"
+                      >
+                        {motionOptions.length === 0 && (
+                          <option value="idle" className="bg-slate-900">动作: idle</option>
+                        )}
+                        {motionOptions.map((motion) => (
+                          <option key={motion} value={motion} className="bg-slate-900">
+                            动作: {motion}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={selectedExpression}
+                        onChange={(e) => setSelectedExpression(e.target.value)}
+                        className="min-w-[160px] flex-1 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-slate-100 outline-none"
+                      >
+                        <option value="" className="bg-slate-900">表情: 默认</option>
+                        {expressionOptions.map((expression) => (
+                          <option key={expression} value={expression} className="bg-slate-900">
+                            表情: {expression}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={handleCopyPreview}
+                        className="inline-flex items-center gap-2 rounded-xl border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-300 transition-colors hover:bg-cyan-500/20"
+                      >
+                        <Copy className="h-4 w-4" />
+                        复制图片
+                      </button>
+                      {copyStatus && (
+                        <span className="text-[11px] font-bold text-slate-300">{copyStatus}</span>
+                      )}
+                    </div>
+                    <Live2dPreview
+                      ref={previewRef}
+                      key={previewCostume}
+                      modelName={previewCostume}
+                      buildData={previewBuildData}
+                      selectedMotion={selectedMotion}
+                      selectedExpression={selectedExpression}
+                    />
                     <div className="absolute bottom-3 left-3 px-3 py-1 rounded-full bg-black/50 backdrop-blur text-[10px] font-black text-cyan-400 border border-white/10">
                       CUBISM 2.1
                     </div>
