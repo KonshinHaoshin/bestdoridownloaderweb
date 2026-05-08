@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { BuildData, CharaRoster, CostumeMap } from '../types';
+import { BuildData, CardMap, CharaRoster, CostumeMap } from '../types';
 import { getApiBase, getAssetsBase } from '../config';
 import { bundleAssetUrl } from '../utils/assets';
 
@@ -15,6 +15,11 @@ export const fetchAssetsIndex = async (): Promise<any> => {
 
 export const fetchCostumes = async (): Promise<CostumeMap> => {
   const response = await axios.get(`${getApiBase()}/costumes/all.5.json`);
+  return response.data;
+};
+
+export const fetchCards = async (): Promise<CardMap> => {
+  const response = await axios.get(`${getApiBase()}/cards/all.5.json`);
   return response.data;
 };
 
