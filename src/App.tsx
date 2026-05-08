@@ -1,15 +1,77 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes } from './api/bestdori';
-import { CharaRoster, BuildData, CostumeMap } from './types';
+import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes, fetchCards } from './api/bestdori';
+import { CharaRoster, BuildData, CardInfo, CardMap, CostumeInfo, CostumeMap } from './types';
 import Live2dPreview, { Live2dPreviewHandle } from './components/Live2dPreview';
 import { getAssetsBase, getInitialBestdoriBase, setBestdoriBase, BESTDORI_WORKER_URL } from './config';
 import { downloadModelsAsZip } from './utils/zip';
+import { searchLive2dModels } from './utils/search';
 import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Globe, Server, Copy } from 'lucide-react';
+
+const safeDownloadFileName = (value: string) => value.replace(/[\\/:*?"<>|]+/g, '_');
+
+const downloadUrlAsFile = async (url: string, fileName: string) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.startsWith('image/')) throw new Error(`资源不是图片：${contentType || 'unknown'}`);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = safeDownloadFileName(fileName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+};
+
+const tryDownloadUrlAsFile = async (url: string, fileName: string) => {
+  try {
+    await downloadUrlAsFile(url, fileName);
+    return true;
+  } catch (e) {
+    console.warn('Image download skipped:', url, e);
+    return false;
+  }
+};
+
+type CardDownloadInfo = {
+  resourceSetName: string;
+  label: string;
+  normalUrl: string;
+  trainedUrl?: string;
+};
+
+type CostumeAssetInfo = {
+  description: string[];
+  thumbUrl: string;
+  cards: CardDownloadInfo[];
+};
+
+const compactStrings = (values?: Array<string | null>) => (values || []).filter(Boolean) as string[];
+const normalizeApiText = (value: string) => value.normalize('NFKC').trim().toLowerCase();
+
+const hasSharedText = (left?: Array<string | null>, right?: Array<string | null>) => {
+  const rightSet = new Set(compactStrings(right).map(normalizeApiText));
+  return compactStrings(left).some((value) => rightSet.has(normalizeApiText(value)));
+};
+
+const hasSharedDate = (left?: Array<string | null>, right?: Array<string | null>) => {
+  const rightSet = new Set(compactStrings(right));
+  return compactStrings(left).some((value) => rightSet.has(value));
+};
+
+const cardMatchesCostume = (card: CardInfo, costume: CostumeInfo) =>
+  card.characterId === costume.characterId &&
+  (hasSharedText(card.prefix, costume.description) || hasSharedDate(card.releasedAt, costume.publishedAt));
+
+const cardLabel = (card: CardInfo) => compactStrings(card.prefix)[3] || compactStrings(card.prefix)[1] || compactStrings(card.prefix)[0] || card.resourceSetName;
 
 function App() {
   const [roster, setRoster] = useState<CharaRoster | null>(null);
   const [assetsIndex, setAssetsIndex] = useState<any>(null);
   const [costumeMap, setCostumeMap] = useState<CostumeMap | null>(null);
+  const [cardMap, setCardMap] = useState<CardMap | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [costumes, setCostumes] = useState<string[]>([]);
   const [matchedCharaName, setMatchedCharaName] = useState('');
@@ -35,18 +97,30 @@ function App() {
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
   const costumeByAsset = useMemo(() => {
-    const m = new Map<string, { description: string[]; thumbUrl: string }>();
+    const m = new Map<string, CostumeAssetInfo>();
     if (!costumeMap) return m;
     const assetsBase = getAssetsBase();
+    const cardEntries = Object.values(cardMap || {});
     Object.entries(costumeMap).forEach(([id, c]) => {
       if (!c?.assetBundleName) return;
       const costumeId = Number(id);
       const group = Number.isFinite(costumeId) ? Math.floor(costumeId / 50) : 0;
       const thumbUrl = `${assetsBase}/jp/thumb/costume/group${group}_rip/${c.assetBundleName}.png`;
-      m.set(c.assetBundleName, { description: c.description || [], thumbUrl });
+      const cards = cardEntries
+        .filter((card) => cardMatchesCostume(card, c))
+        .map((card) => {
+          const base = `${assetsBase}/jp/characters/resourceset/${card.resourceSetName}_rip`;
+          return {
+            resourceSetName: card.resourceSetName,
+            label: cardLabel(card),
+            normalUrl: `${base}/card_normal.png`,
+            trainedUrl: card.stat?.training ? `${base}/card_after_training.png` : undefined,
+          };
+        });
+      m.set(c.assetBundleName, { description: c.description || [], thumbUrl, cards });
     });
     return m;
-  }, [costumeMap, bestdoriBase]);
+  }, [costumeMap, cardMap, bestdoriBase]);
 
   const getCachedBuildData = async (name: string): Promise<BuildData> => {
     const cached = buildDataCache.current.get(name);
@@ -83,7 +157,7 @@ function App() {
     initDone.current = true;
     (async () => {
       try {
-        const [r, a, c] = await Promise.all([fetchCharaRoster(), fetchAssetsIndex(), fetchCostumes()]);
+        const [r, a, c, cards] = await Promise.all([fetchCharaRoster(), fetchAssetsIndex(), fetchCostumes(), fetchCards()]);
         const custom: CharaRoster = {
           '337': { characterType: 'common', characterName: ['三角 初華', 'Uika Misumi', '三角 初華', '三角 初华'], nickname: [null, null, null, null, null] },
           '338': { characterType: 'common', characterName: ['若葉 睦', 'Mutsumi Wakaba', '若葉 睦', '若叶 睦'], nickname: [null, null, null, null, null] },
@@ -94,14 +168,12 @@ function App() {
         setRoster({ ...r, ...custom });
         setAssetsIndex(a);
         setCostumeMap(c);
+        setCardMap(cards);
       } catch (e) {
         console.error('Init failed:', e);
       }
     })();
   }, []);
-
-  /** 搜索时忽略空格，便于「椎名立希」匹配「椎名 立希」、以及部分名「立希」匹配 */
-  const normalizeForSearch = (s: string) => s.replace(/\s+/g, '').toLowerCase();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,38 +181,16 @@ function App() {
 
     const rawTerm = searchTerm.trim();
     if (!rawTerm) return;
-    const term = rawTerm.toLowerCase();
-    const termNorm = normalizeForSearch(rawTerm);
 
     const assets = assetsIndex?.live2d?.chara || {};
-    const models = Object.keys(assets).filter((n) => !n.endsWith('general'));
-
-    const candidates = models.map((model) => {
-      const charaId = String(parseInt(model.slice(0, 3), 10));
-      const chara = roster[charaId];
-      const names = [...(chara?.characterName || []), ...((chara?.nickname || []).filter(Boolean) as string[])];
-      const costumeNames = costumeByAsset.get(model)?.description || [];
-      const searchable = [
-        model,
-        ...names,
-        ...costumeNames,
-        ...costumeNames.map((c) => `${names[0] || ''} ${c}`),
-      ]
-        .filter(Boolean)
-        .join(' | ')
-        .toLowerCase();
-      const searchableNorm = normalizeForSearch(searchable);
-      return { model, charaId, names, costumeNames, searchable, searchableNorm };
+    const result = searchLive2dModels({
+      roster,
+      assets,
+      costumeByAsset,
+      query: rawTerm,
     });
 
-    const matched = candidates.filter(
-      (c) =>
-        c.searchable.includes(term) ||
-        c.searchableNorm.includes(termNorm) ||
-        term.includes(c.model.toLowerCase()) ||
-        termNorm.includes(normalizeForSearch(c.model))
-    );
-    if (matched.length === 0) {
+    if (!result) {
       setMatchedCharaName('');
       setCostumes([]);
       setPreviewCostume(null);
@@ -148,30 +198,13 @@ function App() {
       return;
     }
 
-    const first = matched[0];
-    const charaOnlyHit = first.names.some(
-      (n) =>
-        n &&
-        (n.toLowerCase().includes(term) ||
-          term.includes(n.toLowerCase()) ||
-          normalizeForSearch(n).includes(termNorm) ||
-          termNorm.includes(normalizeForSearch(n)))
-    );
-    const sameCharaMatched = matched.filter((m) => m.charaId === first.charaId);
-    const target =
-      charaOnlyHit
-        ? models.filter((n) => n.startsWith(first.model.slice(0, 3)) && !n.endsWith('general'))
-        : sameCharaMatched.map((m) => m.model);
-
-    const uniqueTarget = Array.from(new Set(target)).sort();
-    const label = first.names[0] || first.model.slice(0, 3);
-    setMatchedCharaName(charaOnlyHit ? label : `${label}（匹配 ${uniqueTarget.length} 套）`);
-    setCostumes(uniqueTarget);
+    setMatchedCharaName(result.label);
+    setCostumes(result.models);
     setPreviewCostume(null);
     setPreviewBuildData(null);
 
     // Pre-fetch all buildData in background so buttons respond instantly
-    uniqueTarget.forEach((name) => {
+    result.models.forEach((name) => {
       if (!buildDataCache.current.has(name)) {
         fetchBuildData(name)
           .then((data) => buildDataCache.current.set(name, data))
@@ -220,6 +253,44 @@ function App() {
       window.setTimeout(() => setCopyStatus(''), 2200);
     }
   }, []);
+
+  const handleDownloadPreviewImage = useCallback(async () => {
+    if (!previewRef.current || !previewCostume) return;
+    try {
+      await previewRef.current.downloadImage(`${previewCostume}.png`);
+      setCopyStatus('截图已下载');
+      window.setTimeout(() => setCopyStatus(''), 1800);
+    } catch (e) {
+      setCopyStatus(e instanceof Error ? e.message : '下载失败');
+      window.setTimeout(() => setCopyStatus(''), 2200);
+    }
+  }, [previewCostume]);
+
+  const handleDownloadCostumeThumb = useCallback(async (name: string) => {
+    const thumbUrl = costumeByAsset.get(name)?.thumbUrl;
+    if (!thumbUrl) return;
+    try {
+      await downloadUrlAsFile(thumbUrl, `${name}.png`);
+    } catch (e) {
+      console.error('Costume thumbnail download failed:', e);
+    }
+  }, [costumeByAsset]);
+
+  const handleDownloadCardImages = useCallback(async (name: string) => {
+    const cards = costumeByAsset.get(name)?.cards || [];
+    try {
+      for (const card of cards) {
+        const downloadedNormal = await tryDownloadUrlAsFile(card.normalUrl, `${card.resourceSetName}_card_normal.png`);
+        let downloadedTrained = false;
+        if (card.trainedUrl) {
+          downloadedTrained = await tryDownloadUrlAsFile(card.trainedUrl, `${card.resourceSetName}_card_after_training.png`);
+        }
+        if (!downloadedNormal && !downloadedTrained) throw new Error(`没有可下载卡面：${card.resourceSetName}`);
+      }
+    } catch (e) {
+      console.error('Card image download failed:', e);
+    }
+  }, [costumeByAsset]);
 
   // Toggle select (multi)
   const handleSelect = useCallback(async (name: string) => {
@@ -392,6 +463,7 @@ function App() {
                 const isPreviewing = previewCostume === costume;
                 const isSelected = selectedMap.has(costume);
                 const size = modelSizes.get(costume);
+                const cardCount = costumeByAsset.get(costume)?.cards.length || 0;
 
                 return (
                   <div
@@ -419,15 +491,36 @@ function App() {
                     {/* Right: buttons */}
                     <div className="flex gap-1.5 shrink-0">
                       {costumeByAsset.get(costume)?.thumbUrl && (
-                        <img
-                          src={costumeByAsset.get(costume)!.thumbUrl}
-                          alt={costume}
-                          className="w-11 h-11 rounded-lg object-cover border border-white/10 bg-white/[0.03]"
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
+                        <div className="relative h-11 w-11 shrink-0">
+                          <img
+                            src={costumeByAsset.get(costume)!.thumbUrl}
+                            alt={costume}
+                            className="h-11 w-11 rounded-lg border border-white/10 bg-white/[0.03] object-cover"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadCostumeThumb(costume)}
+                            title="下载小图标"
+                            className="absolute -bottom-1 -right-1 inline-flex h-5 w-5 items-center justify-center rounded-md border border-white/15 bg-slate-950/90 text-slate-300 shadow-sm transition-colors hover:border-blue-400/40 hover:bg-blue-500/90 hover:text-white"
+                          >
+                            <Download className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+                      {cardCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadCardImages(costume)}
+                          title={`下载卡面（${cardCount} 张）`}
+                          className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all bg-white/[0.04] text-slate-500 hover:bg-emerald-500/15 hover:text-emerald-300"
+                        >
+                          <Download className="w-4 h-4" />
+                          卡面
+                        </button>
                       )}
                       <button
                         onClick={() => handlePreview(costume)}
@@ -471,7 +564,7 @@ function App() {
           <section className="lg:col-span-7 flex flex-col gap-8 lg:sticky lg:top-8">
 
             {/* Preview Window */}
-            <div className="rounded-3xl overflow-hidden border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm flex flex-col" style={{ height: '500px' }}>
+            <div className="rounded-3xl overflow-hidden border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm flex flex-col aspect-[9/16] h-[650px] w-auto mx-auto">
               <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2 text-cyan-400">
                   <Eye className="w-5 h-5" />
@@ -527,6 +620,13 @@ function App() {
                       >
                         <Copy className="h-4 w-4" />
                         复制图片
+                      </button>
+                      <button
+                        onClick={handleDownloadPreviewImage}
+                        className="inline-flex items-center gap-2 rounded-xl border border-blue-400/20 bg-blue-500/10 px-3 py-2 text-xs font-bold text-blue-300 transition-colors hover:bg-blue-500/20"
+                      >
+                        <Download className="h-4 w-4" />
+                        下载截图
                       </button>
                       {copyStatus && (
                         <span className="text-[11px] font-bold text-slate-300">{copyStatus}</span>

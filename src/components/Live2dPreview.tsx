@@ -14,6 +14,7 @@ interface Live2dPreviewProps {
 
 export interface Live2dPreviewHandle {
   copyImage: () => Promise<void>;
+  downloadImage: (fileName?: string) => Promise<void>;
 }
 
 (window as any).PIXI = PIXI;
@@ -22,6 +23,9 @@ const motionKey = (fileName: string) => {
   const last = fileName.split('/').pop() || 'idle';
   return last.replace(/\.bytes$/, '').replace(/\.mtn$/, '');
 };
+const canvasToPngBlob = (canvas: HTMLCanvasElement) =>
+  new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+const safeFileName = (value: string) => value.replace(/[\\/:*?"<>|]+/g, '_');
 const canLoadImage = (url: string) =>
   new Promise<boolean>((resolve) => {
     const img = new Image();
@@ -47,9 +51,23 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
       if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
         throw new Error('当前浏览器不支持复制图片');
       }
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const blob = await canvasToPngBlob(canvas);
       if (!blob) throw new Error('导出图片失败');
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    },
+    downloadImage: async (fileName = `${modelName}.png`) => {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('预览尚未准备好');
+      const blob = await canvasToPngBlob(canvas);
+      if (!blob) throw new Error('导出图片失败');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = safeFileName(fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
     },
   }), []);
 
@@ -60,6 +78,25 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
     setLoadError(null);
 
     let app: PIXI.Application | null = null;
+    let ro: ResizeObserver | null = null;
+
+    const cleanup = () => {
+      ro?.disconnect();
+      ro = null;
+      if (app) {
+        try {
+          app.stage.removeChildren();
+        } catch {}
+        try {
+          app.destroy(true, { children: true, texture: true, baseTexture: true });
+        } catch {}
+        app = null;
+        appRef.current = null;
+        live2dRef.current = null;
+        canvasRef.current = null;
+      }
+      while (container.firstChild) container.removeChild(container.firstChild);
+    };
 
     const setup = async () => {
       await new Promise<void>((resolve) => {
@@ -80,7 +117,7 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
         height: container.clientHeight,
         backgroundAlpha: 0,
         antialias: true,
-        resolution: window.devicePixelRatio || 1,
+        resolution: 1,
         autoDensity: true,
         powerPreference: 'high-performance',
         preserveDrawingBuffer: true,
@@ -88,8 +125,23 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
       appRef.current = app;
       canvasRef.current = app.view as HTMLCanvasElement;
       container.appendChild(canvasRef.current);
-      canvasRef.current.style.width = '100%';
-      canvasRef.current.style.height = '100%';
+      const resize = () => {
+        if (!app || destroyedRef.current) return;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        if (w <= 0 || h <= 0) return;
+        app.renderer.resize(w, h);
+        if (live2dRef.current) {
+          live2dRef.current.x = app.screen.width / 2;
+          live2dRef.current.y = app.screen.height / 2;
+          const mw = live2dRef.current.width || 1;
+          const mh = live2dRef.current.height || 1;
+          const s = Math.min(app.screen.width / mw, app.screen.height / mh) * 0.95;
+          live2dRef.current.scale.set(Number.isFinite(s) && s > 0 ? s : 1);
+        }
+      };
+      ro = new ResizeObserver(resize);
+      ro.observe(container);
 
       if (destroyedRef.current) {
         cleanup();
@@ -157,7 +209,7 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
 
         const w = live2d.width || 1;
         const h = live2d.height || 1;
-        const s = Math.min(app.screen.width / w, app.screen.height / h) * 0.85;
+        const s = Math.min(app.screen.width / w, app.screen.height / h) * 0.95;
         live2d.scale.set(Number.isFinite(s) && s > 0 ? s : 1);
 
         // Keep idle motion by default; tap/hit interaction is disabled by compatibility workaround.
@@ -168,22 +220,6 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
         console.error('Live2D load error:', err);
         setLoadError(err instanceof Error ? err.message : '模型加载失败');
       }
-    };
-
-    const cleanup = () => {
-      if (app) {
-        try {
-          app.stage.removeChildren();
-        } catch {}
-        try {
-          app.destroy(true, { children: true, texture: true, baseTexture: true });
-        } catch {}
-        app = null;
-        appRef.current = null;
-        live2dRef.current = null;
-        canvasRef.current = null;
-      }
-      while (container.firstChild) container.removeChild(container.firstChild);
     };
 
     setup();
