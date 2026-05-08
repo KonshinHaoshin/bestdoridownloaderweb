@@ -439,8 +439,11 @@ function App() {
       <div className="max-w-7xl mx-auto px-4 pb-20">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
-          {/* ===== LEFT: Model List ===== */}
-          <section className="lg:col-span-5 rounded-3xl overflow-hidden border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm flex flex-col" style={{ height: '720px' }}>
+          {/* ===== LEFT: Model Library + Download Queue ===== */}
+          <section className="lg:col-span-5 flex flex-col gap-8">
+
+            {/* Model Library */}
+            <div className="rounded-3xl overflow-hidden border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm flex flex-col" style={{ height: '480px' }}>
             <div className="px-6 py-5 border-b border-white/[0.06] flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-blue-500/10">
@@ -558,13 +561,95 @@ function App() {
                 </div>
               )}
             </div>
-          </section>
+          </div>
 
-          {/* ===== RIGHT: Preview + Download ===== */}
-          <section className="lg:col-span-7 flex flex-col gap-8 lg:sticky lg:top-8">
+          {/* Download Queue (moved below model library) */}
+          <div className="rounded-3xl overflow-hidden border border-white/[0.06] bg-gradient-to-br from-blue-600/10 to-violet-600/10 backdrop-blur-sm p-8">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-2xl bg-blue-500 text-white shadow-lg shadow-blue-600/20">
+                  <Download className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold">下载队列</h3>
+                  <p className="text-slate-500 text-sm">支持多选，每个模型将单独下载为一个 ZIP</p>
+                </div>
+              </div>
+              {selectedCount > 0 && (
+                <button onClick={handleClearAll} className="text-xs text-slate-500 hover:text-red-400 transition-colors font-bold px-3 py-1.5 rounded-lg hover:bg-red-500/10">
+                  全部清空
+                </button>
+              )}
+            </div>
+
+            {selectedCount > 0 ? (
+              <div className="space-y-4">
+                {/* Selected items list */}
+                <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+                  {Array.from(selectedMap.entries()).map(([name, data]) => {
+                    const size = modelSizes.get(name);
+                    const fileCount = getFileCount(data);
+                    return (
+                      <div key={name} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.04] border border-white/[0.06] group">
+                        <FileBox className="w-5 h-5 text-blue-400 shrink-0" />
+                        <div className="flex-grow min-w-0">
+                          <p className="font-bold text-sm truncate">{name}</p>
+                          <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono mt-0.5">
+                            <span>{fileCount} 文件</span>
+                            <span>{size !== undefined ? formatSize(size) : '计算中…'}</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveSelected(name)}
+                          className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Summary bar */}
+                <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.04]">
+                  <div className="flex items-center gap-2 text-sm">
+                    <HardDrive className="w-4 h-4 text-blue-400" />
+                    <span className="text-slate-400">共 <strong className="text-white">{selectedCount}</strong> 个模型</span>
+                  </div>
+                  <span className="text-sm font-mono font-bold text-blue-400">
+                    {totalSize > 0 ? formatSize(totalSize) : '计算大小中…'}
+                  </span>
+                </div>
+
+                {/* Download button */}
+                <button
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 font-black text-lg flex items-center justify-center gap-3 hover:shadow-lg hover:shadow-blue-600/25 disabled:opacity-50 active:scale-[0.98] transition-all"
+                >
+                  {isDownloading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Download className="w-6 h-6" />}
+                  {isDownloading ? downloadProgress || '下载中…' : `下载 ${selectedCount} 个模型（各为独立 ZIP）`}
+                </button>
+              </div>
+            ) : (
+              <div className="py-14 text-center rounded-2xl border-2 border-dashed border-white/[0.06]">
+                <div className="w-12 h-12 rounded-xl bg-white/[0.03] flex items-center justify-center mx-auto mb-3">
+                  <FileBox className="w-6 h-6 text-slate-700" />
+                </div>
+                <h4 className="font-bold text-slate-500 mb-1">未选择模型</h4>
+                <p className="text-slate-600 text-xs">在模型库中点击「选择」以添加到下载队列</p>
+              </div>
+            )}
+          </div>
+
+        </section>
+
+          {/* ===== RIGHT: Preview ===== */}
+          <section className="lg:col-span-7 lg:sticky lg:top-8">
 
             {/* Preview Window */}
-            <div className="rounded-3xl overflow-hidden border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm flex flex-col aspect-[9/16] h-[650px] w-auto mx-auto">
+            <div className="rounded-3xl overflow-hidden border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm flex flex-col w-full" style={{ height: '680px' }}>
               <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2 text-cyan-400">
                   <Eye className="w-5 h-5" />
@@ -656,83 +741,6 @@ function App() {
               </div>
             </div>
 
-            {/* Download Card */}
-            <div className="rounded-3xl overflow-hidden border border-white/[0.06] bg-gradient-to-br from-blue-600/10 to-violet-600/10 backdrop-blur-sm p-8">
-              {/* Header */}
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-2xl bg-blue-500 text-white shadow-lg shadow-blue-600/20">
-                    <Download className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold">下载队列</h3>
-                    <p className="text-slate-500 text-sm">支持多选，每个模型将单独下载为一个 ZIP</p>
-                  </div>
-                </div>
-                {selectedCount > 0 && (
-                  <button onClick={handleClearAll} className="text-xs text-slate-500 hover:text-red-400 transition-colors font-bold px-3 py-1.5 rounded-lg hover:bg-red-500/10">
-                    全部清空
-                  </button>
-                )}
-              </div>
-
-              {selectedCount > 0 ? (
-                <div className="space-y-4">
-                  {/* Selected items list */}
-                  <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                    {Array.from(selectedMap.entries()).map(([name, data]) => {
-                      const size = modelSizes.get(name);
-                      const fileCount = getFileCount(data);
-                      return (
-                        <div key={name} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.04] border border-white/[0.06] group">
-                          <FileBox className="w-5 h-5 text-blue-400 shrink-0" />
-                          <div className="flex-grow min-w-0">
-                            <p className="font-bold text-sm truncate">{name}</p>
-                            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono mt-0.5">
-                              <span>{fileCount} 文件</span>
-                              <span>{size !== undefined ? formatSize(size) : '计算中…'}</span>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleRemoveSelected(name)}
-                            className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Summary bar */}
-                  <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.04]">
-                    <div className="flex items-center gap-2 text-sm">
-                      <HardDrive className="w-4 h-4 text-blue-400" />
-                      <span className="text-slate-400">共 <strong className="text-white">{selectedCount}</strong> 个模型</span>
-                    </div>
-                    <span className="text-sm font-mono font-bold text-blue-400">
-                      {totalSize > 0 ? formatSize(totalSize) : '计算大小中…'}
-                    </span>
-                  </div>
-
-                  {/* Download button */}
-                  <button
-                    onClick={handleDownload}
-                    disabled={isDownloading}
-                    className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 font-black text-lg flex items-center justify-center gap-3 hover:shadow-lg hover:shadow-blue-600/25 disabled:opacity-50 active:scale-[0.98] transition-all"
-                  >
-                    {isDownloading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Download className="w-6 h-6" />}
-                    {isDownloading ? downloadProgress || '下载中…' : `下载 ${selectedCount} 个模型（各为独立 ZIP）`}
-                  </button>
-                </div>
-              ) : (
-                <div className="py-14 text-center rounded-2xl border-2 border-dashed border-white/[0.06]">
-                  <Package className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-                  <p className="text-slate-600 font-bold text-sm">点击左侧「选择」按钮添加模型到队列</p>
-                  <p className="text-slate-700 text-xs mt-1">支持多选，再次点击可取消选择</p>
-                </div>
-              )}
-            </div>
           </section>
         </div>
       </div>
