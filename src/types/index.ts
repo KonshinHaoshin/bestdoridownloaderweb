@@ -41,6 +41,21 @@ export interface CostumeInfo {
   characterId: number;
   assetBundleName: string;
   description?: string[];
+  publishedAt?: (string | null)[];
 }
 
 export type CostumeMap = Record<string, CostumeInfo>;
+
+export interface CardInfo {
+  characterId: number;
+  rarity: number;
+  resourceSetName: string;
+  prefix?: (string | null)[];
+  releasedAt?: (string | null)[];
+  type?: string;
+  stat?: {
+    training?: unknown;
+  };
+}
+
+export type CardMap = Record<string, CardInfo>;
