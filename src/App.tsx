@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes, fetchCards } from './api/bestdori';
 import { CharaRoster, BuildData, CardInfo, CardMap, CostumeInfo, CostumeMap } from './types';
 import Live2dPreview, { Live2dPreviewHandle } from './components/Live2dPreview';
-import { getAssetsBase, getInitialBestdoriBase, setBestdoriBase, BESTDORI_WORKER_URL } from './config';
+import { getAssetsBase } from './config';
 import { downloadModelsAsZip } from './utils/zip';
 import { searchLive2dModels } from './utils/search';
-import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Globe, Server, Copy } from 'lucide-react';
+import { CUSTOM_CHARA_ROSTER } from './data/customCharacters';
+import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Copy } from 'lucide-react';
 
 const safeDownloadFileName = (value: string) => value.replace(/[\\/:*?"<>|]+/g, '_');
 
@@ -91,9 +92,6 @@ function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState('');
 
-  // 直连 / 反代（持久化到 localStorage）
-  const [bestdoriBase, setBestdoriBaseState] = useState(() => getInitialBestdoriBase());
-
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
   const costumeByAsset = useMemo(() => {
@@ -120,7 +118,7 @@ function App() {
       m.set(c.assetBundleName, { description: c.description || [], thumbUrl, cards });
     });
     return m;
-  }, [costumeMap, cardMap, bestdoriBase]);
+  }, [costumeMap, cardMap]);
 
   const getCachedBuildData = async (name: string): Promise<BuildData> => {
     const cached = buildDataCache.current.get(name);
@@ -158,14 +156,7 @@ function App() {
     (async () => {
       try {
         const [r, a, c, cards] = await Promise.all([fetchCharaRoster(), fetchAssetsIndex(), fetchCostumes(), fetchCards()]);
-        const custom: CharaRoster = {
-          '337': { characterType: 'common', characterName: ['三角 初華', 'Uika Misumi', '三角 初華', '三角 初华'], nickname: [null, null, null, null, null] },
-          '338': { characterType: 'common', characterName: ['若葉 睦', 'Mutsumi Wakaba', '若葉 睦', '若叶 睦'], nickname: [null, null, null, null, null] },
-          '339': { characterType: 'common', characterName: ['八幡 海鈴', 'Umiri Yahata', '八幡 海鈴', '八幡 海铃'], nickname: [null, null, null, null, null] },
-          '340': { characterType: 'common', characterName: ['祐天寺 にゃむ', 'Nyamu Yūtenji', '祐天寺 若麦', '祐天寺 喵梦'], nickname: [null, null, null, null, null] },
-          '341': { characterType: 'common', characterName: ['豊川 祥子', 'Sakiko Togawa', '豊川 祥子', '丰川祥子'], nickname: [null, null, null, null, null] },
-        };
-        setRoster({ ...r, ...custom });
+        setRoster({ ...r, ...CUSTOM_CHARA_ROSTER });
         setAssetsIndex(a);
         setCostumeMap(c);
         setCardMap(cards);
@@ -377,40 +368,6 @@ function App() {
         <p className="text-slate-500 text-base tracking-wide mb-4">
           搜索、预览、打包下载 BanG Dream! Live2D 模型
         </p>
-        <div className="inline-flex rounded-xl border border-white/[0.08] bg-white/[0.03] p-1 gap-0.5">
-          <button
-            type="button"
-            onClick={() => {
-              setBestdoriBase('');
-              setBestdoriBaseState('');
-            }}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              !bestdoriBase
-                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-            }`}
-            title="直连 Bestdori（依赖当前站点代理或 CORS）"
-          >
-            <Globe className="w-4 h-4" />
-            直连
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setBestdoriBase(BESTDORI_WORKER_URL);
-              setBestdoriBaseState(BESTDORI_WORKER_URL);
-            }}
-            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              bestdoriBase
-                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]'
-            }`}
-            title="通过反代节点请求（推荐，避免 CORS）"
-          >
-            <Server className="w-4 h-4" />
-            反代
-          </button>
-        </div>
       </header>
 
       {/* Search */}

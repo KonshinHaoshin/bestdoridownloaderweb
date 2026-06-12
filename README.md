@@ -18,6 +18,12 @@ pnpm dev
 
 默认开发地址：`http://localhost:5173`
 
+## API / 资源请求
+
+- 本地开发：通过 Vite proxy 转发 `/bestdori-api/*` 和 `/bestdori-assets/*`
+- 线上部署：通过当前网站的 rewrite 转发到 Bestdori
+- 不再默认使用 Cloudflare Worker 反代
+
 ## 搜索说明
 
 - 输入角色名：显示该角色全部 Live2D 模型
@@ -27,5 +33,4 @@ pnpm dev
 ## 文档
 
 - 服装名搜索规则：[`docs/SEARCH.md`](./docs/SEARCH.md)
-
 
