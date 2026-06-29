@@ -3,9 +3,11 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display-webgal/cubism2';
+import { CHARACTER_ALIASES } from '../data/characterAliases';
 import { PART_PRESETS } from '../data/partPresets';
 import {
   BuildData,
+  BundleFile,
   CompositeLayerDraft,
   CompositeManifest,
   CompositeSummary,
@@ -30,6 +32,44 @@ const safeSegment = (value: string) =>
     .replace(/[^a-zA-Z0-9._-]+/g, '_')
     .replace(/^_+|_+$/g, '') || 'model';
 
+const selectorSegment = (value: string) =>
+  safeSegment(value).toLowerCase();
+
+const characterIdFromModelName = (modelName: string) => {
+  const raw = modelName.slice(0, 3);
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? String(parsed) : raw.replace(/^0+/, '') || raw;
+};
+
+const englishNameLastToken = (names: string[] = []) => {
+  const englishName = names
+    .map((name) => name.trim())
+    .find((name) => /^[A-Za-z][A-Za-z .'-]* [A-Za-z][A-Za-z .'-]*$/.test(name));
+  return englishName?.split(/\s+/).pop();
+};
+
+export const getCompositeLayerSelectorPrefix = (modelName: string, characterNames: string[] = []) => {
+  const charaId = characterIdFromModelName(modelName);
+  const englishLastName = englishNameLastToken(characterNames);
+  if (englishLastName) return selectorSegment(englishLastName);
+
+  const aliases = CHARACTER_ALIASES[charaId] || CHARACTER_ALIASES[modelName.slice(0, 3)] || [];
+  const asciiFullAlias = aliases.find((alias) => /^[A-Za-z][A-Za-z .'-]* [A-Za-z][A-Za-z .'-]*$/.test(alias.trim()));
+  const asciiAlias = asciiFullAlias?.split(/\s+/).pop() || aliases.find((alias) => /^[a-z][a-z0-9_-]*$/i.test(alias.trim()));
+  return selectorSegment(asciiAlias || charaId || modelName);
+};
+
+const selectorName = (prefix: string | undefined, name: string) =>
+  prefix ? `${prefix}/${name}` : name;
+
+const textDataUrl = (mime: string, text: string) =>
+  `data:${mime};charset=utf-8,${encodeURIComponent(text)}`;
+
+type CompositeSelectorAsset = {
+  selector: string;
+  asset: BundleFile;
+};
+
 const motionKey = (fileName: string) => {
   const last = fileName.split('/').pop() || 'idle';
   return last.replace(/\.bytes$/, '').replace(/\.mtn$/, '');
@@ -37,6 +77,39 @@ const motionKey = (fileName: string) => {
 
 const expressionKey = (fileName: string) =>
   (fileName.split('/').pop() || '').replace(/\.exp\.json$/, '');
+
+const IMPORT_PARAM_ID = 'PARAM_IMPORT';
+
+const isImportParamId = (value: unknown) =>
+  typeof value === 'string' && value.trim().toUpperCase() === IMPORT_PARAM_ID;
+
+export const stripImportFromMotionText = (text: string) =>
+  text.replace(/^[\t ]*PARAM_IMPORT\s*=.*(?:\r?\n|$)/gim, '');
+
+const stripImportFromExpressionValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stripImportFromExpressionValue(item))
+      .filter((item) => item !== undefined);
+  }
+
+  if (!value || typeof value !== 'object') return value;
+
+  const record = value as Record<string, unknown>;
+  if (['id', 'Id', 'ID', 'param', 'Param', 'parameterId', 'ParameterId'].some((key) => isImportParamId(record[key]))) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(record)
+      .filter(([key]) => !isImportParamId(key))
+      .map(([key, entry]) => [key, stripImportFromExpressionValue(entry)])
+      .filter(([, entry]) => entry !== undefined)
+  );
+};
+
+export const stripImportFromExpressionJson = (expression: unknown) =>
+  stripImportFromExpressionValue(expression);
 
 export const createLive2dModelSettings = (
   modelName: string,
@@ -64,6 +137,56 @@ export const createLive2dModelSettings = (
   }
 
   return settings;
+};
+
+export const createImportCleanedLive2dModelSettings = async (
+  modelName: string,
+  buildData: BuildData,
+  initOpacities?: ModelPartOpacity[],
+  selectorPrefix?: string,
+  motionAssets?: CompositeSelectorAsset[],
+  expressionAssets?: CompositeSelectorAsset[]
+) => {
+  const settings = createLive2dModelSettings(modelName, buildData, initOpacities) as Record<string, any>;
+  const resolvedMotionAssets =
+    motionAssets?.length
+      ? motionAssets
+      : buildData.motions.map((motion) => ({
+          selector: selectorName(selectorPrefix, motionKey(motion.fileName) || 'idle'),
+          asset: motion,
+        }));
+  const resolvedExpressionAssets =
+    expressionAssets?.length
+      ? expressionAssets
+      : buildData.expressions.map((expression) => ({
+          selector: selectorName(selectorPrefix, expressionKey(expression.fileName)),
+          asset: expression,
+        }));
+
+  settings.motions = {};
+  await Promise.all(
+    resolvedMotionAssets.map(async ({ selector, asset }) => {
+      const response = await axios.get(bundleAssetUrl(asset, 'motion'), { responseType: 'text' });
+      const cleaned = stripImportFromMotionText(response.data as string);
+      settings.motions[selector] = [{ file: textDataUrl('application/octet-stream', cleaned) }];
+    })
+  );
+
+  settings.expressions = await Promise.all(
+    resolvedExpressionAssets.map(async ({ selector, asset }) => {
+      const response = await axios.get(bundleAssetUrl(asset, 'expression'), { responseType: 'json' });
+      const cleaned = stripImportFromExpressionJson(response.data) ?? {};
+      return {
+        name: selector,
+        file: textDataUrl('application/json', JSON.stringify(cleaned)),
+      };
+    })
+  );
+
+  return {
+    settings,
+    revokeObjectUrls: () => {},
+  };
 };
 
 export const inspectModelPartIds = async (
@@ -125,6 +248,7 @@ export const prepareCompositeLayers = async (
       ...layer,
       index,
       folderName: `layer_${String(index).padStart(2, '0')}_${safeSegment(layer.modelName)}_${safeSegment(layer.layerId)}`,
+      selectorPrefix: getCompositeLayerSelectorPrefix(layer.modelName, layer.characterNames),
       initOpacities,
     });
   }
@@ -135,15 +259,15 @@ export const prepareCompositeLayers = async (
 export const buildCompositeManifest = (layers: PreparedCompositeLayer[], importValue?: number): CompositeManifest => {
   const parts = layers.map((layer) => ({
     path: `${layer.folderName}/model.json`,
-    id: `${layer.index}_${safeSegment(layer.partCategories.join('-'))}_${safeSegment(layer.modelName)}_${safeSegment(layer.layerId)}`,
+    id: layer.selectorPrefix,
     folder: layer.folderName,
     index: layer.index,
   }));
 
   const summary: CompositeSummary = {
     version: 2,
-    motions: commonMotions(layers),
-    expressions: unionExpressions(layers),
+    motions: getCompositeMotionOptions(layers),
+    expressions: getCompositeExpressionOptions(layers),
     import: importValue,
   };
 
@@ -160,6 +284,8 @@ export const downloadCompositeZip = async (
 
   const prepared = await prepareCompositeLayers(layers, partIdCache);
   const manifest = buildCompositeManifest(prepared, importValue);
+  const motionAssets = getCompositeMotionAssets(prepared);
+  const expressionAssets = getCompositeExpressionAssets(prepared);
   const zip = new JSZip();
   const root = zip.folder('composite-model');
   if (!root) return;
@@ -167,19 +293,25 @@ export const downloadCompositeZip = async (
   root.file('composite.jsonl', `${manifest.rawText}\n`);
 
   for (const layer of prepared) {
-    await addPreparedLayerToZip(root, layer, importValue);
+    await addPreparedLayerToZip(root, layer, importValue, motionAssets, expressionAssets);
   }
 
   const content = await zip.generateAsync({ type: 'blob' });
   saveAs(content, 'composite-model.zip');
 };
 
-const addPreparedLayerToZip = async (root: JSZip, layer: PreparedCompositeLayer, importValue?: number) => {
+const addPreparedLayerToZip = async (
+  root: JSZip,
+  layer: PreparedCompositeLayer,
+  importValue?: number,
+  motionAssets: CompositeSelectorAsset[] = [],
+  expressionAssets: CompositeSelectorAsset[] = []
+) => {
   const layerFolder = root.folder(layer.folderName);
   const dataFolder = layerFolder?.folder('data');
   if (!layerFolder || !dataFolder) return;
 
-  const filesToDownload: { url: string; folder: JSZip; name: string }[] = [
+  const filesToDownload: { url: string; folder: JSZip; name: string; cleanAs?: 'motion' | 'expression' }[] = [
     {
       url: bundleAssetUrl(layer.buildData.model, 'model'),
       folder: dataFolder,
@@ -205,22 +337,24 @@ const addPreparedLayerToZip = async (root: JSZip, layer: PreparedCompositeLayer,
 
   const motionFolder = dataFolder.folder('motions');
   if (motionFolder) {
-    layer.buildData.motions.forEach((motion) => {
+    motionAssets.forEach(({ selector, asset }) => {
       filesToDownload.push({
-        url: bundleAssetUrl(motion, 'motion'),
+        url: bundleAssetUrl(asset, 'motion'),
         folder: motionFolder,
-        name: normalizeMotionFileName(motion.fileName),
+        name: `${safeSelectorPath(selector)}.mtn`,
+        cleanAs: 'motion',
       });
     });
   }
 
   const expressionFolder = dataFolder.folder('expressions');
   if (expressionFolder) {
-    layer.buildData.expressions.forEach((expression) => {
+    expressionAssets.forEach(({ selector, asset }) => {
       filesToDownload.push({
-        url: bundleAssetUrl(expression, 'expression'),
+        url: bundleAssetUrl(asset, 'expression'),
         folder: expressionFolder,
-        name: expression.fileName,
+        name: `${safeSelectorPath(selector)}.exp.json`,
+        cleanAs: 'expression',
       });
     });
   }
@@ -228,18 +362,36 @@ const addPreparedLayerToZip = async (root: JSZip, layer: PreparedCompositeLayer,
   await Promise.all(
     filesToDownload.map(async (file) => {
       try {
-        const response = await axios.get(file.url, { responseType: 'blob' });
-        file.folder.file(file.name, response.data);
+        if (file.cleanAs === 'motion') {
+          const response = await axios.get(file.url, { responseType: 'text' });
+          const cleaned = stripImportFromMotionText(response.data as string);
+          file.folder.file(file.name, cleaned);
+        } else if (file.cleanAs === 'expression') {
+          const response = await axios.get(file.url, { responseType: 'json' });
+          const cleaned = stripImportFromExpressionJson(response.data) ?? {};
+          file.folder.file(file.name, JSON.stringify(cleaned));
+        } else {
+          const response = await axios.get(file.url, { responseType: 'blob' });
+          file.folder.file(file.name, response.data);
+        }
       } catch (error) {
         console.error(`Failed to download ${file.url}`, error);
       }
     })
   );
 
-  layerFolder.file('model.json', JSON.stringify(createDownloadModelJson(layer, importValue), null, 2));
+  layerFolder.file(
+    'model.json',
+    JSON.stringify(createDownloadModelJson(layer, importValue, motionAssets, expressionAssets), null, 2)
+  );
 };
 
-const createDownloadModelJson = (layer: PreparedCompositeLayer, importValue?: number) => {
+const createDownloadModelJson = (
+  layer: PreparedCompositeLayer,
+  importValue?: number,
+  motionAssets: CompositeSelectorAsset[] = [],
+  expressionAssets: CompositeSelectorAsset[] = []
+) => {
   const modelJson: Record<string, unknown> = {
     version: 'Sample 1.0.0',
     layout: { center_x: 0, center_y: 0, width: 2 },
@@ -254,15 +406,13 @@ const createDownloadModelJson = (layer: PreparedCompositeLayer, importValue?: nu
     textures: layer.buildData.textures.map(
       (texture) => `data/textures/${normalizeTextureFileName(texture.fileName)}`
     ),
-    motions: layer.buildData.motions.reduce((acc: Record<string, Array<{ file: string }>>, motion) => {
-      const normalizedFile = normalizeMotionFileName(motion.fileName);
-      const name = normalizedFile.split('/').pop()?.replace(/\.mtn$/, '') || 'motion';
-      acc[name] = [{ file: `data/motions/${normalizedFile}` }];
+    motions: motionAssets.reduce((acc: Record<string, Array<{ file: string }>>, { selector }) => {
+      acc[selector] = [{ file: `data/motions/${safeSelectorPath(selector)}.mtn` }];
       return acc;
     }, {}),
-    expressions: layer.buildData.expressions.map((expression) => ({
-      name: expression.fileName.replace(/\.exp\.json$/, ''),
-      file: `data/expressions/${expression.fileName}`,
+    expressions: expressionAssets.map(({ selector }) => ({
+      name: selector,
+      file: `data/expressions/${safeSelectorPath(selector)}.exp.json`,
     })),
   };
 
@@ -277,27 +427,48 @@ const createDownloadModelJson = (layer: PreparedCompositeLayer, importValue?: nu
   return modelJson;
 };
 
-const commonMotions = (layers: PreparedCompositeLayer[]) => {
-  let common: Set<string> | null = null;
-  for (const layer of layers) {
-    const current = new Set<string>(
-      layer.buildData.motions.map((motion) => motionKey(motion.fileName)).filter(Boolean)
-    );
-    common = common
-      ? new Set<string>([...common].filter((motion: string) => current.has(motion)))
-      : current;
-  }
-  return Array.from(common || []).sort();
+export const getCompositeMotionAssets = (layers: Array<Pick<CompositeLayerDraft, 'modelName' | 'buildData' | 'characterNames'>>) =>
+  dedupeSelectorAssets(
+    layers.flatMap((layer) => {
+      const prefix = getCompositeLayerSelectorPrefix(layer.modelName, layer.characterNames);
+      return layer.buildData.motions
+        .map((motion) => ({
+          selector: selectorName(prefix, motionKey(motion.fileName) || 'idle'),
+          asset: motion,
+        }));
+    })
+  );
+
+export const getCompositeExpressionAssets = (layers: Array<Pick<CompositeLayerDraft, 'modelName' | 'buildData' | 'characterNames'>>) =>
+  dedupeSelectorAssets(
+    layers.flatMap((layer) => {
+      const prefix = getCompositeLayerSelectorPrefix(layer.modelName, layer.characterNames);
+      return layer.buildData.expressions
+        .map((asset) => ({
+          selector: selectorName(prefix, expressionKey(asset.fileName)),
+          asset,
+        }))
+        .filter(({ selector }) => selector.split('/').pop());
+    })
+  );
+
+export const getCompositeMotionOptions = (layers: Array<Pick<CompositeLayerDraft, 'modelName' | 'buildData' | 'characterNames'>>) =>
+  getCompositeMotionAssets(layers).map(({ selector }) => selector).sort();
+
+export const getCompositeExpressionOptions = (layers: Array<Pick<CompositeLayerDraft, 'modelName' | 'buildData' | 'characterNames'>>) =>
+  getCompositeExpressionAssets(layers).map(({ selector }) => selector).sort();
+
+const dedupeSelectorAssets = (assets: CompositeSelectorAsset[]) => {
+  const seen = new Set<string>();
+  return assets.filter(({ selector }) => {
+    if (seen.has(selector)) return false;
+    seen.add(selector);
+    return true;
+  });
 };
 
-const unionExpressions = (layers: PreparedCompositeLayer[]) =>
-  Array.from(
-    new Set(
-      layers.flatMap((layer) =>
-        layer.buildData.expressions.map((expression) => expressionKey(expression.fileName)).filter(Boolean)
-      )
-    )
-  ).sort();
+const safeSelectorPath = (selector: string) =>
+  selector.split('/').map(safeSegment).join('/');
 
 const collectStringIds = (sources: unknown[], pattern: RegExp): string[] => {
   const ids = new Set<string>();

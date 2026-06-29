@@ -1,14 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display-webgal/cubism2';
 import { CompositeLayerDraft } from '../types';
-import { createLive2dModelSettings, prepareCompositeLayers } from '../utils/composite';
+import {
+  createImportCleanedLive2dModelSettings,
+  getCompositeExpressionAssets,
+  getCompositeMotionAssets,
+  prepareCompositeLayers,
+} from '../utils/composite';
+import { downloadCanvasImage } from '../utils/canvas';
 import { Loader2 } from 'lucide-react';
 
 interface CompositeLive2dPreviewProps {
   layers: CompositeLayerDraft[];
   partIdCache: Map<string, string[]>;
   importValue?: number;
+  selectedMotion?: string;
+  selectedExpression?: string;
+}
+
+export interface CompositeLive2dPreviewHandle {
+  downloadImage: (fileName?: string) => Promise<void>;
 }
 
 (window as any).PIXI = PIXI;
@@ -18,11 +30,45 @@ const applyImportToModel = (model: any, importValue?: number) => {
   model?.internalModel?.coreModel?.setParamFloat?.('PARAM_IMPORT', importValue);
 };
 
-const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeLive2dPreviewProps) => {
+const disableAutomaticIdleMotion = (model: any) => {
+  const motionManager = model?.internalModel?.motionManager;
+  if (!motionManager) return;
+  try {
+    motionManager.stopAllMotions?.();
+  } catch {}
+  if (motionManager.groups) {
+    motionManager.groups.idle = undefined;
+  }
+};
+
+const applyMotionToModel = (model: any, name?: string) => {
+  if (!name) return;
+  try {
+    model?.motion?.(name, 0, 3);
+  } catch {
+    model?.motion?.(name);
+  }
+};
+
+const applyExpressionToModel = (model: any, name?: string) => {
+  if (!name) return;
+  model?.expression?.(name);
+};
+
+const CompositeLive2dPreview = forwardRef<CompositeLive2dPreviewHandle, CompositeLive2dPreviewProps>(({
+  layers,
+  partIdCache,
+  importValue,
+  selectedMotion,
+  selectedExpression,
+}, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const modelsRef = useRef<any[]>([]);
   const importValueRef = useRef<number | undefined>(importValue);
+  const selectedMotionRef = useRef<string | undefined>(selectedMotion);
+  const selectedExpressionRef = useRef<string | undefined>(selectedExpression);
   const destroyedRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -30,11 +76,31 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
     () => layers.map((layer) => `${layer.layerId}:${layer.modelName}:${layer.partCategories.join('-')}`).join('|'),
     [layers]
   );
+  const motionAssets = useMemo(() => getCompositeMotionAssets(layers), [layers]);
+  const expressionAssets = useMemo(() => getCompositeExpressionAssets(layers), [layers]);
+
+  useImperativeHandle(ref, () => ({
+    downloadImage: async (fileName = 'model.webp') => {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('预览尚未准备好');
+      await downloadCanvasImage(canvas, fileName);
+    },
+  }), []);
 
   useEffect(() => {
     importValueRef.current = importValue;
     modelsRef.current.forEach((model) => applyImportToModel(model, importValue));
   }, [importValue]);
+
+  useEffect(() => {
+    selectedMotionRef.current = selectedMotion;
+    modelsRef.current.forEach((model) => applyMotionToModel(model, selectedMotion));
+  }, [selectedMotion]);
+
+  useEffect(() => {
+    selectedExpressionRef.current = selectedExpression;
+    modelsRef.current.forEach((model) => applyExpressionToModel(model, selectedExpression));
+  }, [selectedExpression]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -47,6 +113,7 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
     let app: PIXI.Application | null = null;
     let ro: ResizeObserver | null = null;
     let applyImportTicker: (() => void) | null = null;
+    const revokeCleanedModelUrls: Array<() => void> = [];
 
     const clearModels = () => {
       for (const model of modelsRef.current) {
@@ -68,6 +135,7 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
       }
       applyImportTicker = null;
       clearModels();
+      revokeCleanedModelUrls.splice(0).forEach((revoke) => revoke());
       if (app) {
         try {
           app.stage.removeChildren();
@@ -77,6 +145,7 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
         } catch {}
         app = null;
         appRef.current = null;
+        canvasRef.current = null;
       }
       while (container.firstChild) container.removeChild(container.firstChild);
     };
@@ -123,7 +192,8 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
         preserveDrawingBuffer: true,
       });
       appRef.current = app;
-      container.appendChild(app.view as HTMLCanvasElement);
+      canvasRef.current = app.view as HTMLCanvasElement;
+      container.appendChild(canvasRef.current);
       applyImportTicker = () => {
         modelsRef.current.forEach((model) => applyImportToModel(model, importValueRef.current));
       };
@@ -143,15 +213,35 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
         const prepared = await prepareCompositeLayers(layers, partIdCache);
         for (const layer of prepared) {
           if (destroyedRef.current || !appRef.current) return;
-          const model = await (Live2DModel as any).from(
-            createLive2dModelSettings(layer.modelName, layer.buildData, layer.initOpacities)
+          const { settings, revokeObjectUrls } = await createImportCleanedLive2dModelSettings(
+            layer.modelName,
+            layer.buildData,
+            layer.initOpacities,
+            layer.selectorPrefix,
+            motionAssets,
+            expressionAssets
           );
+          if (destroyedRef.current || !appRef.current) {
+            revokeObjectUrls();
+            return;
+          }
+          revokeCleanedModelUrls.push(revokeObjectUrls);
+          const model = await (Live2DModel as any).from(settings);
+          if (destroyedRef.current || !appRef.current) {
+            try {
+              model.destroy();
+            } catch {}
+            return;
+          }
           try {
             model.autoInteract = false;
             model.interactive = false;
             if ('eventMode' in model) model.eventMode = 'none';
           } catch {}
+          disableAutomaticIdleMotion(model);
           applyImportToModel(model, importValueRef.current);
+          applyMotionToModel(model, selectedMotionRef.current);
+          applyExpressionToModel(model, selectedExpressionRef.current);
           appRef.current.stage.addChild(model);
           modelsRef.current.push(model);
         }
@@ -171,7 +261,7 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
       setIsLoading(false);
       cleanup();
     };
-  }, [layerKey, partIdCache]);
+  }, [layerKey, partIdCache, motionAssets, expressionAssets]);
 
   return (
     <div className="h-full w-full relative">
@@ -189,6 +279,8 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
       )}
     </div>
   );
-};
+});
+
+CompositeLive2dPreview.displayName = 'CompositeLive2dPreview';
 
 export default CompositeLive2dPreview;
