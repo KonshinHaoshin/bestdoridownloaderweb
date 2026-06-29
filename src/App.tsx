@@ -194,8 +194,9 @@ function App() {
       modelName: model,
       buildData: selectedMap.get(model)!,
       partCategories: cats,
+      characterNames: roster?.[String(parseInt(model.slice(0, 3), 10))]?.characterName || [],
     }));
-  }, [slotAssignment, selectedMap]);
+  }, [slotAssignment, selectedMap, roster]);
 
   const compositeMotionOptions = useMemo(
     () => getCompositeMotionOptions(compositeLayers),

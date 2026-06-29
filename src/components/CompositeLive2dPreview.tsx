@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display-webgal/cubism2';
 import { CompositeLayerDraft } from '../types';
-import { createLive2dModelSettings, prepareCompositeLayers } from '../utils/composite';
+import {
+  createImportCleanedLive2dModelSettings,
+  getCompositeExpressionAssets,
+  getCompositeMotionAssets,
+  prepareCompositeLayers,
+} from '../utils/composite';
 import { Loader2 } from 'lucide-react';
 
 interface CompositeLive2dPreviewProps {
@@ -65,6 +70,8 @@ const CompositeLive2dPreview = ({
     () => layers.map((layer) => `${layer.layerId}:${layer.modelName}:${layer.partCategories.join('-')}`).join('|'),
     [layers]
   );
+  const motionAssets = useMemo(() => getCompositeMotionAssets(layers), [layers]);
+  const expressionAssets = useMemo(() => getCompositeExpressionAssets(layers), [layers]);
 
   useEffect(() => {
     importValueRef.current = importValue;
@@ -92,6 +99,7 @@ const CompositeLive2dPreview = ({
     let app: PIXI.Application | null = null;
     let ro: ResizeObserver | null = null;
     let applyImportTicker: (() => void) | null = null;
+    const revokeCleanedModelUrls: Array<() => void> = [];
 
     const clearModels = () => {
       for (const model of modelsRef.current) {
@@ -113,6 +121,7 @@ const CompositeLive2dPreview = ({
       }
       applyImportTicker = null;
       clearModels();
+      revokeCleanedModelUrls.splice(0).forEach((revoke) => revoke());
       if (app) {
         try {
           app.stage.removeChildren();
@@ -188,9 +197,26 @@ const CompositeLive2dPreview = ({
         const prepared = await prepareCompositeLayers(layers, partIdCache);
         for (const layer of prepared) {
           if (destroyedRef.current || !appRef.current) return;
-          const model = await (Live2DModel as any).from(
-            createLive2dModelSettings(layer.modelName, layer.buildData, layer.initOpacities)
+          const { settings, revokeObjectUrls } = await createImportCleanedLive2dModelSettings(
+            layer.modelName,
+            layer.buildData,
+            layer.initOpacities,
+            layer.selectorPrefix,
+            motionAssets,
+            expressionAssets
           );
+          if (destroyedRef.current || !appRef.current) {
+            revokeObjectUrls();
+            return;
+          }
+          revokeCleanedModelUrls.push(revokeObjectUrls);
+          const model = await (Live2DModel as any).from(settings);
+          if (destroyedRef.current || !appRef.current) {
+            try {
+              model.destroy();
+            } catch {}
+            return;
+          }
           try {
             model.autoInteract = false;
             model.interactive = false;
@@ -219,7 +245,7 @@ const CompositeLive2dPreview = ({
       setIsLoading(false);
       cleanup();
     };
-  }, [layerKey, partIdCache]);
+  }, [layerKey, partIdCache, motionAssets, expressionAssets]);
 
   return (
     <div className="h-full w-full relative">

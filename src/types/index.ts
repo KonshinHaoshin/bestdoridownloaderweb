@@ -72,10 +72,12 @@ export interface CompositeLayerDraft {
   modelName: string;
   buildData: BuildData;
   partCategories: PartCategory[];
+  characterNames?: string[];
 }
 
 export interface PreparedCompositeLayer extends CompositeLayerDraft {
   folderName: string;
+  selectorPrefix: string;
   index: number;
   initOpacities?: ModelPartOpacity[];
 }
