@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
     "composite": true,
-    "noEmit": true,
     "skipLibCheck": true,
     "lib": ["ESNext"],
+    "outDir": "tsconfig-node-dist",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
