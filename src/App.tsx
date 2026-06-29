@@ -8,8 +8,8 @@ import { downloadModelsAsZip } from './utils/zip';
 import { downloadCompositeZip } from './utils/composite';
 import { searchLive2dModels } from './utils/search';
 import { CUSTOM_CHARA_ROSTER } from './data/customCharacters';
-import { PART_CATEGORIES, PART_PRESET_MAP, PART_PRESET_OPTIONS, type PartPresetName } from './data/partPresets';
-import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Copy, Layers3, Boxes, ArrowUp, ArrowDown, CopyPlus } from 'lucide-react';
+import { PART_CATEGORIES } from './data/partPresets';
+import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Copy, Layers3, Boxes } from 'lucide-react';
 
 type AppMode = 'download' | 'composite';
 
@@ -54,12 +54,8 @@ type CostumeAssetInfo = {
   cards: CardDownloadInfo[];
 };
 
-type CompositeLayerRow = {
-  layerId: string;
-  modelName: string;
-  presetName: PartPresetName;
-  partCategories: PartCategory[];
-};
+type PartAssignment = Record<PartCategory, string | null>;
+const EMPTY_ASSIGNMENT: PartAssignment = { 后发: null, 身体: null, 脸: null, 帽子: null };
 
 const compactStrings = (values?: Array<string | null>) => (values || []).filter(Boolean) as string[];
 const normalizeApiText = (value: string) => value.normalize('NFKC').trim().toLowerCase();
@@ -113,7 +109,7 @@ function App() {
   const [downloadProgress, setDownloadProgress] = useState('');
 
   // Composite (拼好模)
-  const [compositeLayerRows, setCompositeLayerRows] = useState<CompositeLayerRow[]>([]);
+  const [slotAssignment, setSlotAssignment] = useState<PartAssignment>({ ...EMPTY_ASSIGNMENT });
   const [isCompositePreview, setIsCompositePreview] = useState(false);
   const [isDownloadingComposite, setIsDownloadingComposite] = useState(false);
   const [compositeStatus, setCompositeStatus] = useState('');
@@ -121,17 +117,7 @@ function App() {
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
   const compositePartIdCache = useRef<Map<string, string[]>>(new Map());
-  const compositeLayerSeq = useRef(0);
   const nameImportMap = useRef<Map<string, number>>(new Map());
-  const createCompositeLayerRow = useCallback(
-    (modelName: string, presetName: PartPresetName = '全部'): CompositeLayerRow => ({
-      layerId: `${safeDownloadFileName(modelName)}_${Date.now().toString(36)}_${compositeLayerSeq.current++}`,
-      modelName,
-      presetName,
-      partCategories: PART_PRESET_MAP[presetName],
-    }),
-    []
-  );
   const costumeByAsset = useMemo(() => {
     const m = new Map<string, CostumeAssetInfo>();
     if (!costumeMap) return m;
@@ -188,17 +174,20 @@ function App() {
     ).sort();
   }, [previewBuildData]);
 
-  const compositeLayers = useMemo<CompositeLayerDraft[]>(() =>
-    compositeLayerRows
-      .filter((row) => selectedMap.has(row.modelName))
-      .map((row) => ({
-        layerId: row.layerId,
-        modelName: row.modelName,
-        buildData: selectedMap.get(row.modelName)!,
-        partCategories: row.partCategories,
-      })),
-    [compositeLayerRows, selectedMap]
-  );
+  const compositeLayers = useMemo<CompositeLayerDraft[]>(() => {
+    const byModel = new Map<string, PartCategory[]>();
+    for (const cat of PART_CATEGORIES) {
+      const model = slotAssignment[cat];
+      if (!model || !selectedMap.has(model)) continue;
+      byModel.set(model, [...(byModel.get(model) ?? []), cat]);
+    }
+    return Array.from(byModel.entries()).map(([modelName, partCategories]) => ({
+      layerId: modelName,
+      modelName,
+      buildData: selectedMap.get(modelName)!,
+      partCategories,
+    }));
+  }, [slotAssignment, selectedMap]);
 
   const matchedImportValue = useMemo(() => {
     if (!matchedCharaName) return undefined;
@@ -208,64 +197,47 @@ function App() {
   useEffect(() => {
     if (initDone.current) return;
     initDone.current = true;
+    // name_import.json独立加载，不依赖 Bestdori API
+    fetch('/name_import.json').then((res) => res.json()).then((nameImport) => {
+      setNameImportList(nameImport);
+      const nim = new Map<string, number>();
+      (nameImport as Array<{import: number; name_ja: string; name_en: string; name_zh: string}>).forEach((e) => {
+        [e.name_ja, e.name_en, e.name_zh].forEach((n) => nim.set(n.replace(/\s/g, '').toLowerCase(), e.import));
+      });
+      nameImportMap.current = nim;
+    }).catch((e) => console.error('name_import load failed:', e));
     (async () => {
       try {
-        const [r, a, c, cards, nameImport] = await Promise.all([
+        const [r, a, c, cards] = await Promise.all([
           fetchCharaRoster(), fetchAssetsIndex(), fetchCostumes(), fetchCards(),
-          fetch('/name_import.json').then((res) => res.json()),
         ]);
         setRoster({ ...r, ...CUSTOM_CHARA_ROSTER });
         setAssetsIndex(a);
         setCostumeMap(c);
         setCardMap(cards);
-        setNameImportList(nameImport);
-        const nim = new Map<string, number>();
-        (nameImport as Array<{import: number; name_ja: string; name_en: string; name_zh: string}>).forEach((e) => {
-          [e.name_ja, e.name_en, e.name_zh].forEach((n) => nim.set(n.replace(/\s/g, '').toLowerCase(), e.import));
-        });
-        nameImportMap.current = nim;
       } catch (e) {
         console.error('Init failed:', e);
       }
     })();
   }, []);
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!roster) return;
-
-    const rawTerm = searchTerm.trim();
-    if (!rawTerm) return;
-
+  const performSearch = (term: string) => {
+    if (!roster || !term.trim()) return;
     const assets = assetsIndex?.live2d?.chara || {};
-    const result = searchLive2dModels({
-      roster,
-      assets,
-      costumeByAsset,
-      query: rawTerm,
-    });
-
-    if (!result) {
-      setMatchedCharaName('');
-      setCostumes([]);
-      setPreviewCostume(null);
-      setPreviewBuildData(null);
-      return;
-    }
-
+    const result = searchLive2dModels({ roster, assets, costumeByAsset, query: term.trim() });
+    if (!result) { setMatchedCharaName(''); setCostumes([]); setPreviewCostume(null); setPreviewBuildData(null); return; }
     setMatchedCharaName(result.label);
     setCostumes(result.models);
     setPreviewCostume(null);
     setPreviewBuildData(null);
-
-    // Pre-fetch all buildData in background so buttons respond instantly
     result.models.forEach((name) => {
-      if (!buildDataCache.current.has(name)) {
-        fetchBuildData(name)
-          .then((data) => buildDataCache.current.set(name, data))
-          .catch(() => {});
-      }
+      if (!buildDataCache.current.has(name)) fetchBuildData(name).then((data) => buildDataCache.current.set(name, data)).catch(() => {});
     });
+  };
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    performSearch(searchTerm);
   };
 
   // Toggle preview
@@ -348,55 +320,42 @@ function App() {
     }
   }, [costumeByAsset]);
 
-  // Toggle select (shared by both modes). Selecting adds a composite layer row;
-  // deselecting removes all layer rows that referenced the model.
   const handleSelect = useCallback(async (name: string) => {
     if (selectedMap.has(name)) {
-      setSelectedMap((prev) => {
-        const next = new Map(prev);
-        next.delete(name);
+      setSelectedMap((prev) => { const next = new Map(prev); next.delete(name); return next; });
+      setModelSizes((prev) => { const next = new Map(prev); next.delete(name); return next; });
+      setSlotAssignment((prev) => {
+        const next = { ...prev } as PartAssignment;
+        for (const cat of PART_CATEGORIES) if (next[cat] === name) next[cat] = null;
         return next;
       });
-      setModelSizes((prev) => {
-        const next = new Map(prev);
-        next.delete(name);
-        return next;
-      });
-      setCompositeLayerRows((prev) => prev.filter((row) => row.modelName !== name));
       return;
     }
     try {
       const data = await getCachedBuildData(name);
       setSelectedMap((prev) => new Map(prev).set(name, data));
-      setCompositeLayerRows((prev) => [...prev, createCompositeLayerRow(name)]);
       if (!modelSizes.has(name)) {
-        fetchModelSize(data).then((size) => {
-          setModelSizes((prev) => new Map(prev).set(name, size));
-        });
+        fetchModelSize(data).then((size) => setModelSizes((prev) => new Map(prev).set(name, size)));
       }
     } catch (e) {
       console.error('Select failed:', e);
     }
-  }, [selectedMap, modelSizes, createCompositeLayerRow]);
+  }, [selectedMap, modelSizes]);
 
   const handleRemoveSelected = (name: string) => {
-    setSelectedMap((prev) => {
-      const next = new Map(prev);
-      next.delete(name);
+    setSelectedMap((prev) => { const next = new Map(prev); next.delete(name); return next; });
+    setModelSizes((prev) => { const next = new Map(prev); next.delete(name); return next; });
+    setSlotAssignment((prev) => {
+      const next = { ...prev } as PartAssignment;
+      for (const cat of PART_CATEGORIES) if (next[cat] === name) next[cat] = null;
       return next;
     });
-    setModelSizes((prev) => {
-      const next = new Map(prev);
-      next.delete(name);
-      return next;
-    });
-    setCompositeLayerRows((prev) => prev.filter((row) => row.modelName !== name));
   };
 
   const handleClearAll = () => {
     setSelectedMap(new Map());
     setModelSizes(new Map());
-    setCompositeLayerRows([]);
+    setSlotAssignment({ ...EMPTY_ASSIGNMENT });
     setIsCompositePreview(false);
     setCompositeStatus('');
   };
@@ -415,48 +374,6 @@ function App() {
       setIsDownloadingZip(false);
       setDownloadProgress('');
     }
-  };
-
-  const handleCompositePresetChange = (layerId: string, presetName: PartPresetName) => {
-    setCompositeLayerRows((prev) =>
-      prev.map((row) => row.layerId === layerId ? { ...row, presetName, partCategories: PART_PRESET_MAP[presetName] } : row)
-    );
-    setCompositeStatus('');
-  };
-
-  const moveCompositeLayer = (layerId: string, direction: -1 | 1) => {
-    setCompositeLayerRows((prev) => {
-      const index = prev.findIndex((row) => row.layerId === layerId);
-      const nextIndex = index + direction;
-      if (index < 0 || nextIndex < 0 || nextIndex >= prev.length) return prev;
-      const next = [...prev];
-      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-      return next;
-    });
-    setCompositeStatus('');
-  };
-
-  const duplicateCompositeLayer = (layerId: string) => {
-    setCompositeLayerRows((prev) => {
-      const index = prev.findIndex((row) => row.layerId === layerId);
-      if (index < 0) return prev;
-      const source = prev[index];
-      const next = [...prev];
-      next.splice(index + 1, 0, createCompositeLayerRow(source.modelName, source.presetName));
-      return next;
-    });
-    setCompositeStatus('');
-  };
-
-  const removeCompositeLayer = (layerId: string) => {
-    const target = compositeLayerRows.find((row) => row.layerId === layerId);
-    if (!target) return;
-    const remainingRows = compositeLayerRows.filter((row) => row.layerId !== layerId);
-    setCompositeLayerRows(remainingRows);
-    if (!remainingRows.some((row) => row.modelName === target.modelName)) {
-      handleRemoveSelected(target.modelName);
-    }
-    setCompositeStatus('');
   };
 
   const handlePreviewComposite = () => {
@@ -607,7 +524,6 @@ function App() {
                 const isSelected = selectedMap.has(costume);
                 const size = modelSizes.get(costume);
                 const cardCount = costumeByAsset.get(costume)?.cards.length || 0;
-                const selectLabel = mode === 'composite' ? (isSelected ? '已加' : '加层') : (isSelected ? '已选' : '选择');
 
                 return (
                   <div
@@ -680,15 +596,15 @@ function App() {
                       </button>
                       <button
                         onClick={() => handleSelect(costume)}
-                        title={isSelected ? (mode === 'composite' ? '从工作区移除该图层' : '取消选择') : (mode === 'composite' ? '加入拼好模图层' : '加入下载队列')}
+                        title={isSelected ? '取消选择' : (mode === 'composite' ? '加入候选池' : '加入下载队列')}
                         className={`px-3 py-2 rounded text-xs font-bold flex items-center gap-1.5 transition-all ${
                           isSelected
                             ? 'bg-yellow-300 text-black'
                             : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 hover:text-zinc-900'
                         }`}
                       >
-                        {isSelected ? (mode === 'composite' ? <Layers3 className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />) : (mode === 'composite' ? <CopyPlus className="w-4 h-4" /> : <Download className="w-4 h-4" />)}
-                        {selectLabel}
+                        {isSelected ? <CheckCircle2 className="w-4 h-4" /> : <Download className="w-4 h-4" />}
+                        {isSelected ? '已加' : (mode === 'composite' ? '加入' : '选择')}
                       </button>
                     </div>
                   </div>
@@ -786,145 +702,88 @@ function App() {
             </div>
           ) : (
             /* Composite (拼好模) workspace panel */
-            <div className="rounded overflow-hidden border-2 border-zinc-300 bg-zinc-50 p-8">
-              {/* Header */}
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-4">
-                  <div className="p-3 bg-white text-black">
-                    <Boxes className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold">拼好模图层</h3>
-                    <p className="text-slate-500 text-sm">按顺序叠加图层，每层可设预设透明度</p>
-                  </div>
+            <div className="rounded overflow-hidden border-2 border-zinc-300 bg-zinc-50 p-6">
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900">拼好模工作区</h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {selectedCount > 0 ? `${selectedCount} 套服装可用，点击下方分配部位` : '在模型库中点击「加入」以添加候选服装'}
+                  </p>
                 </div>
-                {compositeLayerCount > 0 && (
-                  <button onClick={handleClearAll} className="text-xs text-slate-500 hover:text-red-400 transition-colors font-bold px-3 py-1.5 rounded hover:bg-red-500/10">
-                    全部清空
+                {(selectedCount > 0 || compositeLayers.length > 0) && (
+                  <button onClick={handleClearAll} className="text-xs text-zinc-400 hover:text-red-500 transition-colors font-bold">
+                    清空
                   </button>
                 )}
               </div>
 
-              {compositeLayerCount > 0 ? (
-                <div className="space-y-5">
-                  {/* Layer stack */}
-                  <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                    {compositeLayerRows.map((row, layerIndex) => {
-                      const { layerId, modelName: name, presetName } = row;
-                      const data = selectedMap.get(name);
-                      if (!data) return null;
-                      const size = modelSizes.get(name);
-                      const fileCount = getFileCount(data);
-                      return (
-                        <div key={layerId} className="rounded bg-zinc-100 border border-zinc-200 p-3 group">
-                          <div className="flex items-center gap-3">
-                            <div className="flex flex-col items-center justify-center">
-                              <span className="text-[10px] font-mono text-amber-600 font-bold">L{layerIndex + 1}</span>
-                              <span className="text-[9px] font-mono text-slate-600">/{compositeLayerCount}</span>
-                            </div>
-                            <FileBox className="w-5 h-5 text-amber-600 shrink-0" />
-                            <div className="flex-grow min-w-0">
-                              <p className="font-bold text-sm truncate">{name}</p>
-                              <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono mt-0.5">
-                                <span>{fileCount} 文件</span>
-                                <span>{size !== undefined ? formatSize(size) : '计算中…'}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => moveCompositeLayer(layerId, -1)}
-                                disabled={layerIndex <= 0}
-                                title="上移图层"
-                                className="p-1.5 rounded text-slate-500 hover:text-zinc-900 hover:bg-zinc-200 transition-all disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-500"
-                              >
-                                <ArrowUp className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => moveCompositeLayer(layerId, 1)}
-                                disabled={layerIndex < 0 || layerIndex >= compositeLayerCount - 1}
-                                title="下移图层"
-                                className="p-1.5 rounded text-slate-500 hover:text-zinc-900 hover:bg-zinc-200 transition-all disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-500"
-                              >
-                                <ArrowDown className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => duplicateCompositeLayer(layerId)}
-                                title="复制图层"
-                                className="p-1.5 rounded text-slate-500 hover:text-zinc-900 hover:bg-zinc-200 transition-all"
-                              >
-                                <CopyPlus className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => removeCompositeLayer(layerId)}
-                                title="移除图层"
-                                className="p-1.5 rounded text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="mt-3 flex items-center gap-2">
-                            <Layers3 className="h-4 w-4 text-amber-600 shrink-0" />
-                            <select
-                              value={presetName}
-                              onChange={(e) => handleCompositePresetChange(layerId, e.target.value as PartPresetName)}
-                              className="min-w-0 flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-slate-100 outline-none focus:border-yellow-300"
-                            >
-                              {PART_PRESET_OPTIONS.map((option) => (
-                                <option key={option} value={option} className="bg-white">
-                                  拼好模: {option}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Summary bar */}
-                  <div className="flex items-center justify-between px-4 py-3 rounded bg-white border border-zinc-200">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Layers3 className="w-4 h-4 text-amber-600" />
-                      <span className="text-slate-400">共 <strong className="text-zinc-900">{compositeLayerCount}</strong> 层</span>
+              {/* Part assignment grid */}
+              <div className="space-y-2 mb-4">
+                {PART_CATEGORIES.map((cat) => {
+                  const assigned = slotAssignment[cat];
+                  return (
+                    <div key={cat} className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-zinc-500 w-8 shrink-0 text-right">{cat}</span>
+                      <select
+                        value={assigned ?? ''}
+                        onChange={(e) => setSlotAssignment((prev) => ({ ...prev, [cat]: e.target.value || null }))}
+                        className="flex-1 border border-zinc-300 bg-white px-2 py-1.5 text-xs text-zinc-900 outline-none focus:border-amber-500 transition-colors"
+                      >
+                        <option value="">— 未分配 —</option>
+                        {Array.from(selectedMap.keys()).map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                      {assigned && (
+                        <button
+                          onClick={() => setSlotAssignment((prev) => ({ ...prev, [cat]: null }))}
+                          className="text-zinc-400 hover:text-red-500 transition-colors shrink-0"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
-                    <span className="text-sm font-mono font-bold text-amber-600">
-                      {totalSize > 0 ? formatSize(totalSize) : '计算大小中…'}
-                    </span>
-                  </div>
+                  );
+                })}
+              </div>
 
-                  {/* Composite actions */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <button
-                      onClick={handlePreviewComposite}
-                      disabled={anyDownloading || compositeLayerCount === 0}
-                      className="py-3 rounded border border-zinc-300 bg-amber-600 font-bold text-sm text-white flex items-center justify-center gap-2 hover:bg-amber-700 disabled:opacity-50 transition-all"
-                    >
-                      <Eye className="w-4 h-4" />
-                      预览拼好模
-                    </button>
-                    <button
-                      onClick={handleDownloadComposite}
-                      disabled={anyDownloading || compositeLayerCount === 0}
-                      className="py-3 rounded border-2 border-yellow-300 bg-yellow-300 text-black font-bold text-sm flex items-center justify-center gap-2 hover:bg-zinc-100 disabled:opacity-50 transition-all"
-                    >
-                      {isDownloadingComposite ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                      下载拼好模 ZIP
-                    </button>
-                  </div>
-                  {compositeStatus && (
-                    <p className="text-[11px] font-bold text-slate-300">{compositeStatus}</p>
+              {/* Derived layers summary */}
+              {compositeLayers.length > 0 && (
+                <div className="border border-zinc-200 bg-white px-3 py-2 mb-4 text-xs text-zinc-600 space-y-0.5">
+                  <span className="font-bold text-zinc-900">→ 生成 {compositeLayers.length} 层</span>
+                  {compositeLayers.map((l) => (
+                    <div key={l.modelName} className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-amber-500 shrink-0" />
+                      <span className="font-mono text-amber-600 truncate">{l.modelName}</span>
+                      <span className="text-zinc-400">({l.partCategories.join(' + ')})</span>
+                    </div>
+                  ))}
+                  {matchedImportValue !== undefined && (
+                    <div className="text-zinc-400 pt-0.5 border-t border-zinc-100">import = {matchedImportValue}</div>
                   )}
                 </div>
-              ) : (
-                <div className="py-14 text-center rounded border-2 border-dashed border-zinc-200">
-                  <div className="w-12 h-12 rounded bg-white flex items-center justify-center mx-auto mb-3">
-                    <Boxes className="w-6 h-6 text-slate-700" />
-                  </div>
-                  <h4 className="font-bold text-slate-500 mb-1">工作区为空</h4>
-                  <p className="text-slate-600 text-xs">在模型库中点击「加层」以把模型作为图层加入拼好模</p>
-                </div>
               )}
+
+              {/* Actions */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handlePreviewComposite}
+                  disabled={anyDownloading || compositeLayers.length === 0}
+                  className="py-2.5 border border-zinc-300 bg-white text-sm font-bold text-zinc-700 flex items-center justify-center gap-2 hover:bg-zinc-100 disabled:opacity-40 transition-all"
+                >
+                  <Eye className="w-4 h-4" />
+                  预览
+                </button>
+                <button
+                  onClick={handleDownloadComposite}
+                  disabled={anyDownloading || compositeLayers.length === 0}
+                  className="py-2.5 border-2 border-yellow-300 bg-yellow-300 text-black font-bold text-sm flex items-center justify-center gap-2 hover:bg-zinc-100 disabled:opacity-40 transition-all"
+                >
+                  {isDownloadingComposite ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  下载 ZIP
+                </button>
+              </div>
+              {compositeStatus && <p className="text-xs font-bold text-zinc-600 mt-2">{compositeStatus}</p>}
             </div>
           )}
 
@@ -967,11 +826,11 @@ function App() {
                         <span>拼好模预览</span>
                       </div>
                       <span className="text-[11px] text-slate-400">
-                        {compositeLayerRows.map((row, index) => `L${index + 1} ${row.modelName}:${row.presetName}`).join(' / ')}
+                        {compositeLayers.map((l, i) => `L${i+1} ${l.modelName}`).join(" / ")}
                       </span>
                     </div>
                     <CompositeLive2dPreview
-                      key={compositeLayerRows.map((row) => `${row.layerId}:${row.modelName}:${row.presetName}`).join('|')}
+                      key={compositeLayers.map((l) => l.modelName).join("|")}
                       layers={compositeLayers}
                       partIdCache={compositePartIdCache.current}
                     />
@@ -1098,6 +957,7 @@ function App() {
                     <th className="text-left px-4 py-2 font-semibold">中文</th>
                     <th className="text-left px-4 py-2 font-semibold">日文</th>
                     <th className="text-left px-4 py-2 font-semibold">English</th>
+                    <th className="w-8" />
                   </tr>
                 </thead>
                 <tbody>
@@ -1108,11 +968,20 @@ function App() {
                       return [String(e.import), e.name_zh, e.name_ja, e.name_en].some((v) => v.toLowerCase().includes(kw));
                     })
                     .map((e) => (
-                      <tr key={e.import} className={`border-t border-zinc-200 ${e.import === matchedImportValue ? 'bg-violet-500/15' : 'hover:bg-zinc-100'}`}>
-                        <td className="px-4 py-2 font-mono font-bold text-violet-400">{e.import}</td>
-                        <td className="px-4 py-2 text-slate-300">{e.name_zh}</td>
-                        <td className="px-4 py-2 text-slate-500">{e.name_ja}</td>
-                        <td className="px-4 py-2 text-slate-600">{e.name_en}</td>
+                      <tr key={e.import} className={`border-t border-zinc-200 ${e.import === matchedImportValue ? 'bg-amber-50' : 'hover:bg-zinc-100'}`}>
+                        <td className="px-4 py-2 font-mono font-bold text-amber-600">{e.import}</td>
+                        <td className="px-4 py-2 text-zinc-700">{e.name_zh}</td>
+                        <td className="px-4 py-2 text-zinc-500">{e.name_ja}</td>
+                        <td className="px-4 py-2 text-zinc-400">{e.name_en}</td>
+                        <td className="px-2 py-1">
+                          <button
+                            onClick={() => { setSearchTerm(e.name_zh); performSearch(e.name_zh); setShowImportTable(false); }}
+                            title="查看立绘"
+                            className="px-2 py-1 text-[10px] font-bold border border-zinc-300 hover:border-amber-500 hover:text-amber-600 transition-colors"
+                          >
+                            <Eye className="w-3 h-3" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                 </tbody>

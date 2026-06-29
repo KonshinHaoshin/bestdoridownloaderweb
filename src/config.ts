@@ -1,11 +1,9 @@
-const BUILD_TIME_BASE = import.meta.env.VITE_BESTDORI_BASE ?? '';
-
-const base = BUILD_TIME_BASE.trim().replace(/\/+$/, '');
+const MIRROR_BASE = '/mirror';
 
 export function getApiBase(): string {
-  return base ? `${base}/bestdori-api` : '/bestdori-api';
+  return `${MIRROR_BASE}/bestdori-api`;
 }
 
 export function getAssetsBase(): string {
-  return base ? `${base}/bestdori-assets` : '/bestdori-assets';
+  return `${MIRROR_BASE}/bestdori-assets`;
 }
