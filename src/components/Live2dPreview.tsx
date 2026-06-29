@@ -36,6 +36,17 @@ const canLoadImage = (url: string) =>
 const TRANSPARENT_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9p7fJ4sAAAAASUVORK5CYII=';
 
+const disableAutomaticIdleMotion = (model: any) => {
+  const motionManager = model?.internalModel?.motionManager;
+  if (!motionManager) return;
+  try {
+    motionManager.stopAllMotions?.();
+  } catch {}
+  if (motionManager.groups) {
+    motionManager.groups.idle = undefined;
+  }
+};
+
 const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ modelName, buildData, selectedMotion, selectedExpression }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
@@ -198,6 +209,7 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
           if ('eventMode' in live2d) live2d.eventMode = 'none';
         } catch {}
         live2dRef.current = live2d;
+        disableAutomaticIdleMotion(live2d);
 
         if (destroyedRef.current || !appRef.current) return;
 
@@ -212,10 +224,11 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
         const s = Math.min(app.screen.width / w, app.screen.height / h) * 0.95;
         live2d.scale.set(Number.isFinite(s) && s > 0 ? s : 1);
 
-        // Keep idle motion by default; tap/hit interaction is disabled by compatibility workaround.
-        try {
-          live2d.motion(selectedMotion || 'idle');
-        } catch {}
+        if (selectedMotion) {
+          try {
+            live2d.motion(selectedMotion);
+          } catch {}
+        }
       } catch (err) {
         console.error('Live2D load error:', err);
         setLoadError(err instanceof Error ? err.message : '模型加载失败');
