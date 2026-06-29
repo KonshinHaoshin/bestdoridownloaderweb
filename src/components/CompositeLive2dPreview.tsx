@@ -8,14 +8,21 @@ import { Loader2 } from 'lucide-react';
 interface CompositeLive2dPreviewProps {
   layers: CompositeLayerDraft[];
   partIdCache: Map<string, string[]>;
+  importValue?: number;
 }
 
 (window as any).PIXI = PIXI;
 
-const CompositeLive2dPreview = ({ layers, partIdCache }: CompositeLive2dPreviewProps) => {
+const applyImportToModel = (model: any, importValue?: number) => {
+  if (importValue === undefined || !Number.isFinite(importValue)) return;
+  model?.internalModel?.coreModel?.setParamFloat?.('PARAM_IMPORT', importValue);
+};
+
+const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeLive2dPreviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
   const modelsRef = useRef<any[]>([]);
+  const importValueRef = useRef<number | undefined>(importValue);
   const destroyedRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -23,6 +30,11 @@ const CompositeLive2dPreview = ({ layers, partIdCache }: CompositeLive2dPreviewP
     () => layers.map((layer) => `${layer.layerId}:${layer.modelName}:${layer.partCategories.join('-')}`).join('|'),
     [layers]
   );
+
+  useEffect(() => {
+    importValueRef.current = importValue;
+    modelsRef.current.forEach((model) => applyImportToModel(model, importValue));
+  }, [importValue]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -34,6 +46,7 @@ const CompositeLive2dPreview = ({ layers, partIdCache }: CompositeLive2dPreviewP
 
     let app: PIXI.Application | null = null;
     let ro: ResizeObserver | null = null;
+    let applyImportTicker: (() => void) | null = null;
 
     const clearModels = () => {
       for (const model of modelsRef.current) {
@@ -48,6 +61,12 @@ const CompositeLive2dPreview = ({ layers, partIdCache }: CompositeLive2dPreviewP
     const cleanup = () => {
       ro?.disconnect();
       ro = null;
+      if (app && applyImportTicker) {
+        try {
+          app.ticker.remove(applyImportTicker);
+        } catch {}
+      }
+      applyImportTicker = null;
       clearModels();
       if (app) {
         try {
@@ -105,6 +124,10 @@ const CompositeLive2dPreview = ({ layers, partIdCache }: CompositeLive2dPreviewP
       });
       appRef.current = app;
       container.appendChild(app.view as HTMLCanvasElement);
+      applyImportTicker = () => {
+        modelsRef.current.forEach((model) => applyImportToModel(model, importValueRef.current));
+      };
+      app.ticker.add(applyImportTicker);
 
       ro = new ResizeObserver(() => {
         if (!app || destroyedRef.current) return;
@@ -128,6 +151,7 @@ const CompositeLive2dPreview = ({ layers, partIdCache }: CompositeLive2dPreviewP
             model.interactive = false;
             if ('eventMode' in model) model.eventMode = 'none';
           } catch {}
+          applyImportToModel(model, importValueRef.current);
           appRef.current.stage.addChild(model);
           modelsRef.current.push(model);
         }

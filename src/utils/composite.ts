@@ -167,14 +167,14 @@ export const downloadCompositeZip = async (
   root.file('composite.jsonl', `${manifest.rawText}\n`);
 
   for (const layer of prepared) {
-    await addPreparedLayerToZip(root, layer);
+    await addPreparedLayerToZip(root, layer, importValue);
   }
 
   const content = await zip.generateAsync({ type: 'blob' });
   saveAs(content, 'composite-model.zip');
 };
 
-const addPreparedLayerToZip = async (root: JSZip, layer: PreparedCompositeLayer) => {
+const addPreparedLayerToZip = async (root: JSZip, layer: PreparedCompositeLayer, importValue?: number) => {
   const layerFolder = root.folder(layer.folderName);
   const dataFolder = layerFolder?.folder('data');
   if (!layerFolder || !dataFolder) return;
@@ -236,10 +236,10 @@ const addPreparedLayerToZip = async (root: JSZip, layer: PreparedCompositeLayer)
     })
   );
 
-  layerFolder.file('model.json', JSON.stringify(createDownloadModelJson(layer), null, 2));
+  layerFolder.file('model.json', JSON.stringify(createDownloadModelJson(layer, importValue), null, 2));
 };
 
-const createDownloadModelJson = (layer: PreparedCompositeLayer) => {
+const createDownloadModelJson = (layer: PreparedCompositeLayer, importValue?: number) => {
   const modelJson: Record<string, unknown> = {
     version: 'Sample 1.0.0',
     layout: { center_x: 0, center_y: 0, width: 2 },
@@ -268,6 +268,10 @@ const createDownloadModelJson = (layer: PreparedCompositeLayer) => {
 
   if (layer.initOpacities?.length) {
     modelJson.init_opacities = layer.initOpacities.map(({ id, value }) => ({ id, value }));
+  }
+
+  if (importValue !== undefined && Number.isFinite(importValue)) {
+    modelJson.init_params = [{ id: 'PARAM_IMPORT', value: importValue }];
   }
 
   return modelJson;

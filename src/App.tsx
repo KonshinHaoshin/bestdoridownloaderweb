@@ -113,6 +113,7 @@ function App() {
   const [isCompositePreview, setIsCompositePreview] = useState(false);
   const [isDownloadingComposite, setIsDownloadingComposite] = useState(false);
   const [compositeStatus, setCompositeStatus] = useState('');
+  const [compositeImportStr, setCompositeImportStr] = useState('');
 
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
@@ -200,6 +201,17 @@ function App() {
     if (!matchedCharaName) return undefined;
     return nameImportMap.current.get(matchedCharaName.replace(/\s/g, '').toLowerCase());
   }, [matchedCharaName]);
+
+  const compositeImportValue = useMemo(() => {
+    const raw = compositeImportStr.trim();
+    if (!raw) return matchedImportValue;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }, [compositeImportStr, matchedImportValue]);
+
+  useEffect(() => {
+    setCompositeImportStr(matchedImportValue !== undefined ? String(matchedImportValue) : '');
+  }, [matchedImportValue]);
 
   useEffect(() => {
     if (initDone.current) return;
@@ -399,7 +411,7 @@ function App() {
     setIsDownloadingComposite(true);
     setCompositeStatus('正在生成拼好模 ZIP…');
     try {
-      await downloadCompositeZip(compositeLayers, compositePartIdCache.current, matchedImportValue);
+      await downloadCompositeZip(compositeLayers, compositePartIdCache.current, compositeImportValue);
       setCompositeStatus('拼好模 ZIP 已生成');
     } catch (e) {
       console.error('Composite download failed:', e);
@@ -765,13 +777,25 @@ function App() {
                       <span className="text-zinc-400">({l.partCategories.join(' + ')})</span>
                     </div>
                   ))}
-                  {matchedImportValue !== undefined && (
-                    <div className="text-zinc-400 pt-0.5 border-t border-zinc-100">import = {matchedImportValue}</div>
-                  )}
                 </div>
               )}
 
-              {/* Actions */}
+              {/* Import value */}
+              <div className="flex items-center gap-2 mb-4">
+                <label className="text-xs font-bold text-zinc-500 shrink-0">import</label>
+                <input
+                  type="number"
+                  min={0}
+                  placeholder={matchedImportValue !== undefined ? String(matchedImportValue) : '未设置'}
+                  value={compositeImportStr}
+                  onChange={(e) => setCompositeImportStr(e.target.value)}
+                  className="w-24 border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 outline-none focus:border-amber-500"
+                />
+                {compositeImportStr && (
+                  <button onClick={() => setCompositeImportStr(matchedImportValue !== undefined ? String(matchedImportValue) : '')} className="text-[10px] text-zinc-400 hover:text-zinc-600">重置</button>
+                )}
+                <span className="text-[10px] text-zinc-400">写入 composite.jsonl summary</span>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={handlePreviewComposite}
@@ -840,6 +864,7 @@ function App() {
                       key={compositeLayers.map((l) => l.modelName).join("|")}
                       layers={compositeLayers}
                       partIdCache={compositePartIdCache.current}
+                      importValue={compositeImportValue}
                     />
                     <div className="absolute bottom-3 left-3 px-3 py-1 rounded bg-zinc-200 text-[10px] font-black text-amber-600 border border-zinc-300">
                       COMPOSITE JSONL
