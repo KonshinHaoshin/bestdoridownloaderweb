@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync:bestdori:build": "tsc -p tsconfig.scripts.json",
+    "sync:bestdori": "pnpm sync:bestdori:build && node scripts-dist/sync-bestdori.js"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.0.2",
