@@ -2,11 +2,15 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes, fetchCards } from './api/bestdori';
 import { CharaRoster, BuildData, CardInfo, CardMap, CostumeInfo, CostumeMap } from './types';
 import Live2dPreview, { Live2dPreviewHandle } from './components/Live2dPreview';
+import CompositeLive2dPreview from './components/CompositeLive2dPreview';
 import { getAssetsBase } from './config';
 import { downloadModelsAsZip } from './utils/zip';
+import { downloadCompositeZip } from './utils/composite';
 import { searchLive2dModels } from './utils/search';
 import { CUSTOM_CHARA_ROSTER } from './data/customCharacters';
-import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Copy } from 'lucide-react';
+import { PART_PRESET_OPTIONS } from './data/partPresets';
+import { CompositeLayerDraft, PartPresetName } from './types';
+import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Copy, ArrowUp, ArrowDown, Layers3, CopyPlus } from 'lucide-react';
 
 const safeDownloadFileName = (value: string) => value.replace(/[\\/:*?"<>|]+/g, '_');
 
@@ -47,6 +51,12 @@ type CostumeAssetInfo = {
   description: string[];
   thumbUrl: string;
   cards: CardDownloadInfo[];
+};
+
+type CompositeLayerRow = {
+  layerId: string;
+  modelName: string;
+  presetName: PartPresetName;
 };
 
 const compactStrings = (values?: Array<string | null>) => (values || []).filter(Boolean) as string[];
@@ -91,9 +101,22 @@ function App() {
   const [modelSizes, setModelSizes] = useState<Map<string, number>>(new Map());
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState('');
+  const [compositeLayerRows, setCompositeLayerRows] = useState<CompositeLayerRow[]>([]);
+  const [isCompositePreview, setIsCompositePreview] = useState(false);
+  const [compositeStatus, setCompositeStatus] = useState('');
 
   const initDone = useRef(false);
   const buildDataCache = useRef<Map<string, BuildData>>(new Map());
+  const compositePartIdCache = useRef<Map<string, string[]>>(new Map());
+  const compositeLayerSeq = useRef(0);
+  const createCompositeLayerRow = useCallback(
+    (modelName: string, presetName: PartPresetName = '保持不变'): CompositeLayerRow => ({
+      layerId: `${safeDownloadFileName(modelName)}_${Date.now().toString(36)}_${compositeLayerSeq.current++}`,
+      modelName,
+      presetName,
+    }),
+    []
+  );
   const costumeByAsset = useMemo(() => {
     const m = new Map<string, CostumeAssetInfo>();
     if (!costumeMap) return m;
@@ -149,6 +172,21 @@ function App() {
       )
     ).sort();
   }, [previewBuildData]);
+
+  const compositeLayers = useMemo<CompositeLayerDraft[]>(() => {
+    return compositeLayerRows
+      .map((row) => {
+        const buildData = selectedMap.get(row.modelName);
+        if (!buildData) return null;
+        return {
+          layerId: row.layerId,
+          modelName: row.modelName,
+          buildData,
+          presetName: row.presetName,
+        };
+      })
+      .filter(Boolean) as CompositeLayerDraft[];
+  }, [selectedMap, compositeLayerRows]);
 
   useEffect(() => {
     if (initDone.current) return;
@@ -214,6 +252,7 @@ function App() {
       setCopyStatus('');
       return;
     }
+    setIsCompositePreview(false);
     setIsPreviewLoading(true);
     try {
       const data = await getCachedBuildData(name);
@@ -296,11 +335,13 @@ function App() {
         next.delete(name);
         return next;
       });
+      setCompositeLayerRows((prev) => prev.filter((row) => row.modelName !== name));
       return;
     }
     try {
       const data = await getCachedBuildData(name);
       setSelectedMap((prev) => new Map(prev).set(name, data));
+      setCompositeLayerRows((prev) => [...prev, createCompositeLayerRow(name)]);
       if (!modelSizes.has(name)) {
         fetchModelSize(data).then((size) => {
           setModelSizes((prev) => new Map(prev).set(name, size));
@@ -309,7 +350,7 @@ function App() {
     } catch (e) {
       console.error('Select failed:', e);
     }
-  }, [selectedMap, modelSizes]);
+  }, [selectedMap, modelSizes, createCompositeLayerRow]);
 
   const handleRemoveSelected = (name: string) => {
     setSelectedMap((prev) => {
@@ -322,11 +363,15 @@ function App() {
       next.delete(name);
       return next;
     });
+    setCompositeLayerRows((prev) => prev.filter((row) => row.modelName !== name));
   };
 
   const handleClearAll = () => {
     setSelectedMap(new Map());
     setModelSizes(new Map());
+    setCompositeLayerRows([]);
+    setIsCompositePreview(false);
+    setCompositeStatus('');
   };
 
   const handleDownload = async () => {
@@ -339,6 +384,76 @@ function App() {
       });
     } catch (e) {
       console.error('Download failed:', e);
+    } finally {
+      setIsDownloading(false);
+      setDownloadProgress('');
+    }
+  };
+
+  const handleCompositePresetChange = (layerId: string, presetName: PartPresetName) => {
+    setCompositeLayerRows((prev) =>
+      prev.map((row) => (row.layerId === layerId ? { ...row, presetName } : row))
+    );
+    setCompositeStatus('');
+  };
+
+  const moveCompositeLayer = (layerId: string, direction: -1 | 1) => {
+    setCompositeLayerRows((prev) => {
+      const index = prev.findIndex((row) => row.layerId === layerId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+      return next;
+    });
+    setCompositeStatus('');
+  };
+
+  const duplicateCompositeLayer = (layerId: string) => {
+    setCompositeLayerRows((prev) => {
+      const index = prev.findIndex((row) => row.layerId === layerId);
+      if (index < 0) return prev;
+      const source = prev[index];
+      const next = [...prev];
+      next.splice(index + 1, 0, createCompositeLayerRow(source.modelName, source.presetName));
+      return next;
+    });
+    setCompositeStatus('');
+  };
+
+  const removeCompositeLayer = (layerId: string) => {
+    const target = compositeLayerRows.find((row) => row.layerId === layerId);
+    if (!target) return;
+    const remainingRows = compositeLayerRows.filter((row) => row.layerId !== layerId);
+    setCompositeLayerRows(remainingRows);
+    if (!remainingRows.some((row) => row.modelName === target.modelName)) {
+      handleRemoveSelected(target.modelName);
+    }
+    setCompositeStatus('');
+  };
+
+  const handlePreviewComposite = () => {
+    if (compositeLayers.length === 0) return;
+    setPreviewCostume(null);
+    setPreviewBuildData(null);
+    setSelectedMotion('idle');
+    setSelectedExpression('');
+    setCopyStatus('');
+    setIsCompositePreview(true);
+    setCompositeStatus(`正在预览 ${compositeLayers.length} 层拼好模`);
+  };
+
+  const handleDownloadComposite = async () => {
+    if (compositeLayers.length === 0) return;
+    setIsDownloading(true);
+    setDownloadProgress('准备拼好模…');
+    setCompositeStatus('正在生成拼好模 ZIP…');
+    try {
+      await downloadCompositeZip(compositeLayers, compositePartIdCache.current);
+      setCompositeStatus('拼好模 ZIP 已生成');
+    } catch (e) {
+      console.error('Composite download failed:', e);
+      setCompositeStatus(e instanceof Error ? e.message : '拼好模 ZIP 生成失败');
     } finally {
       setIsDownloading(false);
       setDownloadProgress('');
@@ -543,26 +658,70 @@ function App() {
             {selectedCount > 0 ? (
               <div className="space-y-4">
                 {/* Selected items list */}
-                <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                  {Array.from(selectedMap.entries()).map(([name, data]) => {
+                <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                  {compositeLayers.map(({ layerId, modelName: name, buildData: data, presetName }) => {
                     const size = modelSizes.get(name);
                     const fileCount = getFileCount(data);
+                    const layerIndex = compositeLayers.findIndex((layer) => layer.layerId === layerId);
                     return (
-                      <div key={name} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.04] border border-white/[0.06] group">
-                        <FileBox className="w-5 h-5 text-blue-400 shrink-0" />
-                        <div className="flex-grow min-w-0">
-                          <p className="font-bold text-sm truncate">{name}</p>
-                          <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono mt-0.5">
-                            <span>{fileCount} 文件</span>
-                            <span>{size !== undefined ? formatSize(size) : '计算中…'}</span>
+                      <div key={layerId} className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-3 group">
+                        <div className="flex items-center gap-3">
+                          <FileBox className="w-5 h-5 text-blue-400 shrink-0" />
+                          <div className="flex-grow min-w-0">
+                            <p className="font-bold text-sm truncate">{name}</p>
+                            <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono mt-0.5">
+                              <span>{fileCount} 文件</span>
+                              <span>{size !== undefined ? formatSize(size) : '计算中…'}</span>
+                              <span>Layer {layerIndex + 1}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => moveCompositeLayer(layerId, -1)}
+                              disabled={layerIndex <= 0}
+                              title="上移图层"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-300 hover:bg-cyan-500/10 transition-all disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+                            >
+                              <ArrowUp className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => moveCompositeLayer(layerId, 1)}
+                              disabled={layerIndex < 0 || layerIndex >= compositeLayers.length - 1}
+                              title="下移图层"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-300 hover:bg-cyan-500/10 transition-all disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+                            >
+                              <ArrowDown className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => duplicateCompositeLayer(layerId)}
+                              title="复制图层"
+                              className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all"
+                            >
+                              <CopyPlus className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => removeCompositeLayer(layerId)}
+                              title="移除图层"
+                              className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleRemoveSelected(name)}
-                          className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                        <div className="mt-3 flex items-center gap-2">
+                          <Layers3 className="h-4 w-4 text-emerald-300" />
+                          <select
+                            value={presetName}
+                            onChange={(e) => handleCompositePresetChange(layerId, e.target.value as PartPresetName)}
+                            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-xs font-bold text-slate-100 outline-none focus:border-emerald-400/40"
+                          >
+                            {PART_PRESET_OPTIONS.map((option) => (
+                              <option key={option} value={option} className="bg-slate-900">
+                                拼好模: {option}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
                     );
                   })}
@@ -577,6 +736,42 @@ function App() {
                   <span className="text-sm font-mono font-bold text-blue-400">
                     {totalSize > 0 ? formatSize(totalSize) : '计算大小中…'}
                   </span>
+                </div>
+
+                <div className="rounded-2xl border border-emerald-400/10 bg-emerald-500/[0.05] p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Layers3 className="h-5 w-5 text-emerald-300" />
+                      <div>
+                        <h4 className="text-sm font-black text-emerald-100">一键拼好模</h4>
+                        <p className="text-[11px] text-slate-500">使用上方预设和顺序生成 composite.jsonl 包</p>
+                      </div>
+                    </div>
+                    <span className="rounded-full border border-emerald-400/10 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">
+                      {compositeLayers.length} layers
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      onClick={handlePreviewComposite}
+                      disabled={compositeLayers.length === 0}
+                      className="py-3 rounded-xl border border-emerald-400/20 bg-emerald-500/10 font-bold text-sm text-emerald-200 flex items-center justify-center gap-2 hover:bg-emerald-500/20 disabled:opacity-50 transition-all"
+                    >
+                      <Eye className="w-4 h-4" />
+                      预览拼好模
+                    </button>
+                    <button
+                      onClick={handleDownloadComposite}
+                      disabled={isDownloading || compositeLayers.length === 0}
+                      className="py-3 rounded-xl border border-cyan-400/20 bg-cyan-500/10 font-bold text-sm text-cyan-200 flex items-center justify-center gap-2 hover:bg-cyan-500/20 disabled:opacity-50 transition-all"
+                    >
+                      {isDownloading && downloadProgress.includes('拼好模') ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                      下载拼好模 ZIP
+                    </button>
+                  </div>
+                  {compositeStatus && (
+                    <p className="mt-3 text-[11px] font-bold text-slate-300">{compositeStatus}</p>
+                  )}
                 </div>
 
                 {/* Download button */}
@@ -612,7 +807,11 @@ function App() {
                   <Eye className="w-5 h-5" />
                   <h2 className="text-lg font-bold">预览视窗</h2>
                 </div>
-                {previewCostume && (
+                {isCompositePreview ? (
+                  <span className="text-[11px] font-bold px-3 py-1 bg-emerald-500/10 text-emerald-300 rounded-lg border border-emerald-500/20">
+                    拼好模 · {compositeLayers.length} 层
+                  </span>
+                ) : previewCostume && (
                   <span className="text-[11px] font-bold px-3 py-1 bg-cyan-500/10 text-cyan-400 rounded-lg border border-cyan-500/20">
                     {previewCostume}
                   </span>
@@ -627,7 +826,27 @@ function App() {
                   </div>
                 )}
 
-                {previewCostume && previewBuildData ? (
+                {isCompositePreview && compositeLayers.length > 0 ? (
+                  <div className="w-full h-full relative">
+                    <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-slate-950/60 p-2 backdrop-blur">
+                      <div className="flex items-center gap-2 px-2 text-xs font-bold text-emerald-200">
+                        <Layers3 className="h-4 w-4" />
+                        <span>拼好模预览</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        {compositeLayers.map((layer, index) => `L${index + 1} ${layer.modelName}:${layer.presetName}`).join(' / ')}
+                      </span>
+                    </div>
+                    <CompositeLive2dPreview
+                      key={compositeLayers.map((layer) => `${layer.layerId}:${layer.modelName}:${layer.presetName}`).join('|')}
+                      layers={compositeLayers}
+                      partIdCache={compositePartIdCache.current}
+                    />
+                    <div className="absolute bottom-3 left-3 px-3 py-1 rounded-full bg-black/50 backdrop-blur text-[10px] font-black text-emerald-300 border border-white/10">
+                      COMPOSITE JSONL
+                    </div>
+                  </div>
+                ) : previewCostume && previewBuildData ? (
                   <div className="w-full h-full relative">
                     <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/60 p-2 backdrop-blur">
                       <select
