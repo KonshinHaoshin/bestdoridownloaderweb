@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { fetchCharaRoster, fetchAssetsIndex, fetchBuildData, fetchModelSize, formatSize, getFileCount, fetchCostumes, fetchCards } from './api/bestdori';
 import { CharaRoster, BuildData, CardInfo, CardMap, CostumeInfo, CostumeMap, CompositeLayerDraft, PartCategory } from './types';
 import Live2dPreview, { Live2dPreviewHandle } from './components/Live2dPreview';
-import CompositeLive2dPreview from './components/CompositeLive2dPreview';
+import CompositeLive2dPreview, { CompositeLive2dPreviewHandle } from './components/CompositeLive2dPreview';
 import { getAssetsBase } from './config';
 import { downloadModelsAsZip } from './utils/zip';
 import { downloadCompositeZip, getCompositeExpressionOptions, getCompositeMotionOptions } from './utils/composite';
@@ -99,6 +99,7 @@ function App() {
   const [showImportTable, setShowImportTable] = useState(false);
   const [importSearch, setImportSearch] = useState('');
   const previewRef = useRef<Live2dPreviewHandle | null>(null);
+  const compositePreviewRef = useRef<CompositeLive2dPreviewHandle | null>(null);
 
   // Selection (shared by both modes — each selected model becomes a layer row)
   const [selectedMap, setSelectedMap] = useState<Map<string, BuildData>>(new Map());
@@ -309,16 +310,17 @@ function App() {
   }, []);
 
   const handleDownloadPreviewImage = useCallback(async () => {
-    if (!previewRef.current || !previewCostume) return;
+    const currentPreview = isCompositePreview ? compositePreviewRef.current : previewRef.current;
+    if (!currentPreview || (!isCompositePreview && !previewCostume)) return;
     try {
-      await previewRef.current.downloadImage(`${previewCostume}.png`);
+      await currentPreview.downloadImage('model.webp');
       setCopyStatus('截图已下载');
       window.setTimeout(() => setCopyStatus(''), 1800);
     } catch (e) {
       setCopyStatus(e instanceof Error ? e.message : '下载失败');
       window.setTimeout(() => setCopyStatus(''), 2200);
     }
-  }, [previewCostume]);
+  }, [isCompositePreview, previewCostume]);
 
   const handleDownloadCostumeThumb = useCallback(async (name: string) => {
     const thumbUrl = costumeByAsset.get(name)?.thumbUrl;
@@ -892,8 +894,19 @@ function App() {
                       <span className="min-w-0 flex-[1.2] truncate text-[11px] text-slate-400">
                         {compositeLayers.map((l, i) => `L${i+1} ${l.modelName}`).join(" / ")}
                       </span>
+                      <button
+                        onClick={handleDownloadPreviewImage}
+                        className="inline-flex items-center gap-2 rounded border border-blue-400/20 bg-blue-500/10 px-3 py-2 text-xs font-bold text-blue-700 transition-colors hover:bg-blue-500/20"
+                      >
+                        <Download className="h-4 w-4" />
+                        下载截图
+                      </button>
+                      {copyStatus && (
+                        <span className="text-[11px] font-bold text-amber-700">{copyStatus}</span>
+                      )}
                     </div>
                     <CompositeLive2dPreview
+                      ref={compositePreviewRef}
                       key={compositeLayers.map((l) => l.modelName).join("|")}
                       layers={compositeLayers}
                       partIdCache={compositePartIdCache.current}
