@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-06-29T12:21:52.701Z",
+  "apiBase": "https://bestdori.com/api",
+  "assetsBase": "https://bestdori.com/assets",
+  "scope": "live2d",
+  "dryRun": false,
+  "live2dModels": 3430,
+  "buildDataFiles": {
+    "planned": 0,
+    "exists": 3430,
+    "downloaded": 0,
+    "skipped": 0
+  },
+  "files": {
+    "unique": 40385,
+    "planned": 0,
+    "exists": 17443,
+    "downloaded": 22931,
+    "skipped": 11
+  }
+}
