@@ -142,8 +142,8 @@ export const buildCompositeManifest = (layers: PreparedCompositeLayer[], importV
 
   const summary: CompositeSummary = {
     version: 2,
-    motions: commonMotions(layers),
-    expressions: unionExpressions(layers),
+    motions: getCompositeMotionOptions(layers),
+    expressions: getCompositeExpressionOptions(layers),
     import: importValue,
   };
 
@@ -277,7 +277,7 @@ const createDownloadModelJson = (layer: PreparedCompositeLayer, importValue?: nu
   return modelJson;
 };
 
-const commonMotions = (layers: PreparedCompositeLayer[]) => {
+export const getCompositeMotionOptions = (layers: Array<Pick<CompositeLayerDraft, 'buildData'>>) => {
   let common: Set<string> | null = null;
   for (const layer of layers) {
     const current = new Set<string>(
@@ -290,7 +290,7 @@ const commonMotions = (layers: PreparedCompositeLayer[]) => {
   return Array.from(common || []).sort();
 };
 
-const unionExpressions = (layers: PreparedCompositeLayer[]) =>
+export const getCompositeExpressionOptions = (layers: Array<Pick<CompositeLayerDraft, 'buildData'>>) =>
   Array.from(
     new Set(
       layers.flatMap((layer) =>

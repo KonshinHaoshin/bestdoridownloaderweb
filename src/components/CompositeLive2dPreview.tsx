@@ -9,6 +9,8 @@ interface CompositeLive2dPreviewProps {
   layers: CompositeLayerDraft[];
   partIdCache: Map<string, string[]>;
   importValue?: number;
+  selectedMotion?: string;
+  selectedExpression?: string;
 }
 
 (window as any).PIXI = PIXI;
@@ -18,11 +20,44 @@ const applyImportToModel = (model: any, importValue?: number) => {
   model?.internalModel?.coreModel?.setParamFloat?.('PARAM_IMPORT', importValue);
 };
 
-const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeLive2dPreviewProps) => {
+const disableAutomaticIdleMotion = (model: any) => {
+  const motionManager = model?.internalModel?.motionManager;
+  if (!motionManager) return;
+  try {
+    motionManager.stopAllMotions?.();
+  } catch {}
+  if (motionManager.groups) {
+    motionManager.groups.idle = undefined;
+  }
+};
+
+const applyMotionToModel = (model: any, name?: string) => {
+  if (!name) return;
+  try {
+    model?.motion?.(name, 0, 3);
+  } catch {
+    model?.motion?.(name);
+  }
+};
+
+const applyExpressionToModel = (model: any, name?: string) => {
+  if (!name) return;
+  model?.expression?.(name);
+};
+
+const CompositeLive2dPreview = ({
+  layers,
+  partIdCache,
+  importValue,
+  selectedMotion,
+  selectedExpression,
+}: CompositeLive2dPreviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
   const modelsRef = useRef<any[]>([]);
   const importValueRef = useRef<number | undefined>(importValue);
+  const selectedMotionRef = useRef<string | undefined>(selectedMotion);
+  const selectedExpressionRef = useRef<string | undefined>(selectedExpression);
   const destroyedRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -35,6 +70,16 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
     importValueRef.current = importValue;
     modelsRef.current.forEach((model) => applyImportToModel(model, importValue));
   }, [importValue]);
+
+  useEffect(() => {
+    selectedMotionRef.current = selectedMotion;
+    modelsRef.current.forEach((model) => applyMotionToModel(model, selectedMotion));
+  }, [selectedMotion]);
+
+  useEffect(() => {
+    selectedExpressionRef.current = selectedExpression;
+    modelsRef.current.forEach((model) => applyExpressionToModel(model, selectedExpression));
+  }, [selectedExpression]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -151,7 +196,10 @@ const CompositeLive2dPreview = ({ layers, partIdCache, importValue }: CompositeL
             model.interactive = false;
             if ('eventMode' in model) model.eventMode = 'none';
           } catch {}
+          disableAutomaticIdleMotion(model);
           applyImportToModel(model, importValueRef.current);
+          applyMotionToModel(model, selectedMotionRef.current);
+          applyExpressionToModel(model, selectedExpressionRef.current);
           appRef.current.stage.addChild(model);
           modelsRef.current.push(model);
         }

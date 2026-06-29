@@ -9,6 +9,7 @@ export const PART_PRESETS: Record<PartCategory, string[]> = {
     'PARTS_01_ARM_L_001',
     'PARTS_SKIRT',
     'PARTS_01_BODY',
+    'PARTS_LOWER_BODY',
   ],
   脸: [
     'PARTS_01_FACE_001',

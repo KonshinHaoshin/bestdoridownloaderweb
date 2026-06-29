@@ -5,7 +5,7 @@ import Live2dPreview, { Live2dPreviewHandle } from './components/Live2dPreview';
 import CompositeLive2dPreview from './components/CompositeLive2dPreview';
 import { getAssetsBase } from './config';
 import { downloadModelsAsZip } from './utils/zip';
-import { downloadCompositeZip } from './utils/composite';
+import { downloadCompositeZip, getCompositeExpressionOptions, getCompositeMotionOptions } from './utils/composite';
 import { searchLive2dModels } from './utils/search';
 import { CUSTOM_CHARA_ROSTER } from './data/customCharacters';
 import { PART_CATEGORIES } from './data/partPresets';
@@ -92,7 +92,7 @@ function App() {
   const [previewCostume, setPreviewCostume] = useState<string | null>(null);
   const [previewBuildData, setPreviewBuildData] = useState<BuildData | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
-  const [selectedMotion, setSelectedMotion] = useState('idle');
+  const [selectedMotion, setSelectedMotion] = useState('');
   const [selectedExpression, setSelectedExpression] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
   const [nameImportList, setNameImportList] = useState<Array<{import: number; name_ja: string; name_en: string; name_zh: string}>>([]);
@@ -197,6 +197,16 @@ function App() {
     }));
   }, [slotAssignment, selectedMap]);
 
+  const compositeMotionOptions = useMemo(
+    () => getCompositeMotionOptions(compositeLayers),
+    [compositeLayers]
+  );
+
+  const compositeExpressionOptions = useMemo(
+    () => getCompositeExpressionOptions(compositeLayers),
+    [compositeLayers]
+  );
+
   const matchedImportValue = useMemo(() => {
     if (!matchedCharaName) return undefined;
     return nameImportMap.current.get(matchedCharaName.replace(/\s/g, '').toLowerCase());
@@ -264,7 +274,7 @@ function App() {
     if (previewCostume === name) {
       setPreviewCostume(null);
       setPreviewBuildData(null);
-      setSelectedMotion('idle');
+      setSelectedMotion('');
       setSelectedExpression('');
       setCopyStatus('');
       return;
@@ -273,11 +283,7 @@ function App() {
     setIsPreviewLoading(true);
     try {
       const data = await getCachedBuildData(name);
-      const nextMotion =
-        data.motions
-          .map((m) => (m.fileName.split('/').pop() || 'idle').replace(/\.bytes$/, '').replace(/\.mtn$/, ''))
-          .find((m) => m === 'idle') || 'idle';
-      setSelectedMotion(nextMotion);
+      setSelectedMotion('');
       setSelectedExpression('');
       setCopyStatus('');
       setPreviewBuildData(data);
@@ -399,7 +405,7 @@ function App() {
     if (compositeLayers.length === 0) return;
     setPreviewCostume(null);
     setPreviewBuildData(null);
-    setSelectedMotion('idle');
+    setSelectedMotion('');
     setSelectedExpression('');
     setCopyStatus('');
     setIsCompositePreview(true);
@@ -851,12 +857,38 @@ function App() {
 
                 {isCompositePreview && compositeLayers.length > 0 ? (
                   <div className="w-full h-full relative">
-                    <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 rounded border border-zinc-300 bg-zinc-100/90 p-2">
+                    <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center gap-2 rounded border border-zinc-300 bg-zinc-100/90 p-2">
                       <div className="flex items-center gap-2 px-2 text-xs font-bold text-amber-700">
                         <Layers3 className="h-4 w-4" />
                         <span>拼好模预览</span>
                       </div>
-                      <span className="text-[11px] text-slate-400">
+                      <select
+                        value={selectedMotion}
+                        disabled={compositeMotionOptions.length === 0}
+                        onChange={(e) => setSelectedMotion(e.target.value)}
+                        className="min-w-[150px] flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 outline-none disabled:opacity-50"
+                      >
+                        <option value="" className="bg-white">动作: 无</option>
+                        {compositeMotionOptions.map((motion) => (
+                          <option key={motion} value={motion} className="bg-white">
+                            动作: {motion}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={selectedExpression}
+                        disabled={compositeExpressionOptions.length === 0}
+                        onChange={(e) => setSelectedExpression(e.target.value)}
+                        className="min-w-[150px] flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 outline-none disabled:opacity-50"
+                      >
+                        <option value="" className="bg-white">表情: 无</option>
+                        {compositeExpressionOptions.map((expression) => (
+                          <option key={expression} value={expression} className="bg-white">
+                            表情: {expression}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="min-w-0 flex-[1.2] truncate text-[11px] text-slate-400">
                         {compositeLayers.map((l, i) => `L${i+1} ${l.modelName}`).join(" / ")}
                       </span>
                     </div>
@@ -865,6 +897,8 @@ function App() {
                       layers={compositeLayers}
                       partIdCache={compositePartIdCache.current}
                       importValue={compositeImportValue}
+                      selectedMotion={selectedMotion}
+                      selectedExpression={selectedExpression}
                     />
                     <div className="absolute bottom-3 left-3 px-3 py-1 rounded bg-zinc-200 text-[10px] font-black text-amber-600 border border-zinc-300">
                       COMPOSITE JSONL
@@ -878,9 +912,7 @@ function App() {
                         onChange={(e) => setSelectedMotion(e.target.value)}
                         className="min-w-[160px] flex-1 rounded border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 outline-none"
                       >
-                        {motionOptions.length === 0 && (
-                          <option value="idle" className="bg-white">动作: idle</option>
-                        )}
+                        <option value="" className="bg-white">动作: 无</option>
                         {motionOptions.map((motion) => (
                           <option key={motion} value={motion} className="bg-white">
                             动作: {motion}
