@@ -59,3 +59,44 @@ export interface CardInfo {
 }
 
 export type CardMap = Record<string, CardInfo>;
+
+export type PartPresetName = '保持不变' | '清空(全0)' | '后发' | '身体' | '脸' | '帽子';
+
+export interface ModelPartOpacity {
+  id: string;
+  value: number;
+}
+
+export interface CompositeLayerDraft {
+  layerId: string;
+  modelName: string;
+  buildData: BuildData;
+  presetName: PartPresetName;
+}
+
+export interface PreparedCompositeLayer extends CompositeLayerDraft {
+  folderName: string;
+  index: number;
+  initOpacities?: ModelPartOpacity[];
+}
+
+export interface CompositePart {
+  path: string;
+  type?: 'live2d';
+  id?: string;
+  folder?: string;
+  index?: number;
+}
+
+export interface CompositeSummary {
+  version?: number;
+  motions?: string[];
+  expressions?: string[];
+  import?: number;
+}
+
+export interface CompositeManifest {
+  rawText: string;
+  parts: CompositePart[];
+  summary: CompositeSummary;
+}
