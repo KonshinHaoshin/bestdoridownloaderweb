@@ -4,6 +4,7 @@ import { Live2DModel } from 'pixi-live2d-display-webgal/cubism2';
 import { BuildData } from '../types';
 import { getAssetsBase } from '../config';
 import { bundleAssetUrl } from '../utils/assets';
+import { canvasToImageBlob, downloadCanvasImage } from '../utils/canvas';
 
 interface Live2dPreviewProps {
   modelName: string;
@@ -23,9 +24,6 @@ const motionKey = (fileName: string) => {
   const last = fileName.split('/').pop() || 'idle';
   return last.replace(/\.bytes$/, '').replace(/\.mtn$/, '');
 };
-const canvasToPngBlob = (canvas: HTMLCanvasElement) =>
-  new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-const safeFileName = (value: string) => value.replace(/[\\/:*?"<>|]+/g, '_');
 const canLoadImage = (url: string) =>
   new Promise<boolean>((resolve) => {
     const img = new Image();
@@ -62,23 +60,14 @@ const Live2dPreview = forwardRef<Live2dPreviewHandle, Live2dPreviewProps>(({ mod
       if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
         throw new Error('当前浏览器不支持复制图片');
       }
-      const blob = await canvasToPngBlob(canvas);
+      const blob = await canvasToImageBlob(canvas);
       if (!blob) throw new Error('导出图片失败');
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
     },
-    downloadImage: async (fileName = `${modelName}.png`) => {
+    downloadImage: async (fileName = 'model.webp') => {
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('预览尚未准备好');
-      const blob = await canvasToPngBlob(canvas);
-      if (!blob) throw new Error('导出图片失败');
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = safeFileName(fileName);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await downloadCanvasImage(canvas, fileName);
     },
   }), []);
 

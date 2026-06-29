@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import * as PIXI from 'pixi.js';
 import { Live2DModel } from 'pixi-live2d-display-webgal/cubism2';
 import { CompositeLayerDraft } from '../types';
@@ -8,6 +8,7 @@ import {
   getCompositeMotionAssets,
   prepareCompositeLayers,
 } from '../utils/composite';
+import { downloadCanvasImage } from '../utils/canvas';
 import { Loader2 } from 'lucide-react';
 
 interface CompositeLive2dPreviewProps {
@@ -16,6 +17,10 @@ interface CompositeLive2dPreviewProps {
   importValue?: number;
   selectedMotion?: string;
   selectedExpression?: string;
+}
+
+export interface CompositeLive2dPreviewHandle {
+  downloadImage: (fileName?: string) => Promise<void>;
 }
 
 (window as any).PIXI = PIXI;
@@ -50,15 +55,16 @@ const applyExpressionToModel = (model: any, name?: string) => {
   model?.expression?.(name);
 };
 
-const CompositeLive2dPreview = ({
+const CompositeLive2dPreview = forwardRef<CompositeLive2dPreviewHandle, CompositeLive2dPreviewProps>(({
   layers,
   partIdCache,
   importValue,
   selectedMotion,
   selectedExpression,
-}: CompositeLive2dPreviewProps) => {
+}, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<PIXI.Application | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const modelsRef = useRef<any[]>([]);
   const importValueRef = useRef<number | undefined>(importValue);
   const selectedMotionRef = useRef<string | undefined>(selectedMotion);
@@ -72,6 +78,14 @@ const CompositeLive2dPreview = ({
   );
   const motionAssets = useMemo(() => getCompositeMotionAssets(layers), [layers]);
   const expressionAssets = useMemo(() => getCompositeExpressionAssets(layers), [layers]);
+
+  useImperativeHandle(ref, () => ({
+    downloadImage: async (fileName = 'model.webp') => {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error('预览尚未准备好');
+      await downloadCanvasImage(canvas, fileName);
+    },
+  }), []);
 
   useEffect(() => {
     importValueRef.current = importValue;
@@ -131,6 +145,7 @@ const CompositeLive2dPreview = ({
         } catch {}
         app = null;
         appRef.current = null;
+        canvasRef.current = null;
       }
       while (container.firstChild) container.removeChild(container.firstChild);
     };
@@ -177,7 +192,8 @@ const CompositeLive2dPreview = ({
         preserveDrawingBuffer: true,
       });
       appRef.current = app;
-      container.appendChild(app.view as HTMLCanvasElement);
+      canvasRef.current = app.view as HTMLCanvasElement;
+      container.appendChild(canvasRef.current);
       applyImportTicker = () => {
         modelsRef.current.forEach((model) => applyImportToModel(model, importValueRef.current));
       };
@@ -263,6 +279,8 @@ const CompositeLive2dPreview = ({
       )}
     </div>
   );
-};
+});
+
+CompositeLive2dPreview.displayName = 'CompositeLive2dPreview';
 
 export default CompositeLive2dPreview;
