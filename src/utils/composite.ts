@@ -8,8 +8,9 @@ import {
   BuildData,
   CompositeLayerDraft,
   CompositeManifest,
+  CompositeSummary,
   ModelPartOpacity,
-  PartPresetName,
+  PartCategory,
   PreparedCompositeLayer,
 } from '../types';
 import { getAssetsBase } from '../config';
@@ -86,20 +87,17 @@ export const inspectModelPartIds = async (
   }
 };
 
-export const buildInitOpacities = (
-  presetName: PartPresetName,
+export const buildInitOpacitiesForCategories = (
+  categories: PartCategory[],
   partIds: string[]
 ): ModelPartOpacity[] | undefined => {
-  if (presetName === '保持不变') return undefined;
-  if (presetName === '清空(全0)') {
-    return partIds.map((id) => ({ id, value: 0 }));
+  if (categories.length === 0) return undefined;
+  const visible = new Set<string>();
+  for (const category of categories) {
+    const parts = PART_PRESETS[category] || [];
+    parts.forEach((part) => visible.add(part));
   }
-
-  const visible = new Set(PART_PRESETS[presetName]);
-  return partIds.map((id) => ({
-    id,
-    value: visible.has(id) ? 1 : 0,
-  }));
+  return partIds.map((id) => ({ id, value: visible.has(id) ? 1 : 0 }));
 };
 
 export const prepareCompositeLayers = async (
@@ -110,16 +108,17 @@ export const prepareCompositeLayers = async (
 
   for (const [index, layer] of layers.entries()) {
     let initOpacities: ModelPartOpacity[] | undefined;
-    if (layer.presetName !== '保持不变') {
-      let partIds = partIdCache.get(layer.modelName);
-      if (!partIds) {
-        partIds = await inspectModelPartIds(layer.modelName, layer.buildData);
-        partIdCache.set(layer.modelName, partIds);
+    const partIds = partIdCache.get(layer.modelName);
+    if (layer.partCategories.length > 0 && partIds && partIds.length > 0) {
+      initOpacities = buildInitOpacitiesForCategories(layer.partCategories, partIds);
+    } else if (layer.partCategories.length > 0) {
+      const resolved = await inspectModelPartIds(layer.modelName, layer.buildData);
+      partIdCache.set(layer.modelName, resolved);
+      if (resolved.length === 0) {
+        const categoriesLabel = layer.partCategories.join('/');
+        throw new Error(`${layer.modelName} 未能读取到 PARTS_ ID，无法应用「${categoriesLabel}」部件`);
       }
-      if (partIds.length === 0) {
-        throw new Error(`${layer.modelName} 未能读取到 PARTS_ ID，无法应用「${layer.presetName}」预设`);
-      }
-      initOpacities = buildInitOpacities(layer.presetName, partIds);
+      initOpacities = buildInitOpacitiesForCategories(layer.partCategories, resolved);
     }
 
     prepared.push({
@@ -133,18 +132,19 @@ export const prepareCompositeLayers = async (
   return prepared;
 };
 
-export const buildCompositeManifest = (layers: PreparedCompositeLayer[]): CompositeManifest => {
+export const buildCompositeManifest = (layers: PreparedCompositeLayer[], importValue?: number): CompositeManifest => {
   const parts = layers.map((layer) => ({
     path: `${layer.folderName}/model.json`,
-    id: `${layer.index}_${safeSegment(layer.presetName)}_${safeSegment(layer.modelName)}_${safeSegment(layer.layerId)}`,
+    id: `${layer.index}_${safeSegment(layer.partCategories.join('-'))}_${safeSegment(layer.modelName)}_${safeSegment(layer.layerId)}`,
     folder: layer.folderName,
     index: layer.index,
   }));
 
-  const summary = {
+  const summary: CompositeSummary = {
     version: 2,
     motions: commonMotions(layers),
     expressions: unionExpressions(layers),
+    import: importValue,
   };
 
   const rawText = [...parts, summary].map((line) => JSON.stringify(line)).join('\n');
@@ -153,12 +153,13 @@ export const buildCompositeManifest = (layers: PreparedCompositeLayer[]): Compos
 
 export const downloadCompositeZip = async (
   layers: CompositeLayerDraft[],
-  partIdCache: Map<string, string[]>
+  partIdCache: Map<string, string[]>,
+  importValue?: number
 ) => {
   if (layers.length === 0) return;
 
   const prepared = await prepareCompositeLayers(layers, partIdCache);
-  const manifest = buildCompositeManifest(prepared);
+  const manifest = buildCompositeManifest(prepared, importValue);
   const zip = new JSZip();
   const root = zip.folder('composite-model');
   if (!root) return;

@@ -1,15 +1,8 @@
-import type { PartPresetName } from '../types';
+import type { PartCategory } from '../types';
 
-export const PART_PRESET_OPTIONS: PartPresetName[] = [
-  '保持不变',
-  '清空(全0)',
-  '后发',
-  '身体',
-  '脸',
-  '帽子',
-];
+export const PART_CATEGORIES: PartCategory[] = ['后发', '身体', '脸', '帽子'];
 
-export const PART_PRESETS: Record<Exclude<PartPresetName, '保持不变' | '清空(全0)'>, string[]> = {
+export const PART_PRESETS: Record<PartCategory, string[]> = {
   后发: ['PARTS_01_HAIR_BACK_001'],
   身体: [
     'PARTS_01_ARM_R_001',
@@ -32,3 +25,15 @@ export const PART_PRESETS: Record<Exclude<PartPresetName, '保持不变' | '清�
   ],
   帽子: ['PARTS_HAT', 'PARTS_01_HAT'],
 };
+
+export type PartPresetName = '全部' | '脸' | '身体' | '后发' | '无';
+
+export const PART_PRESET_MAP: Record<PartPresetName, PartCategory[]> = {
+  全部: ['后发', '身体', '脸', '帽子'],
+  脸: ['脸', '帽子'],
+  身体: ['身体'],
+  后发: ['后发'],
+  无: [],
+};
+
+export const PART_PRESET_OPTIONS = Object.keys(PART_PRESET_MAP) as PartPresetName[];

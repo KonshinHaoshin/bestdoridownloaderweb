@@ -20,7 +20,7 @@ const CompositeLive2dPreview = ({ layers, partIdCache }: CompositeLive2dPreviewP
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const layerKey = useMemo(
-    () => layers.map((layer) => `${layer.layerId}:${layer.modelName}:${layer.presetName}`).join('|'),
+    () => layers.map((layer) => `${layer.layerId}:${layer.modelName}:${layer.partCategories.join('-')}`).join('|'),
     [layers]
   );
 
