@@ -60,7 +60,7 @@ export interface CardInfo {
 
 export type CardMap = Record<string, CardInfo>;
 
-export type PartPresetName = '保持不变' | '清空(全0)' | '后发' | '身体' | '脸' | '帽子';
+export type PartCategory = '后发' | '身体' | '脸' | '帽子';
 
 export interface ModelPartOpacity {
   id: string;
@@ -71,7 +71,7 @@ export interface CompositeLayerDraft {
   layerId: string;
   modelName: string;
   buildData: BuildData;
-  presetName: PartPresetName;
+  partCategories: PartCategory[];
 }
 
 export interface PreparedCompositeLayer extends CompositeLayerDraft {
