@@ -313,14 +313,20 @@ function App() {
     const currentPreview = isCompositePreview ? compositePreviewRef.current : previewRef.current;
     if (!currentPreview || (!isCompositePreview && !previewCostume)) return;
     try {
-      await currentPreview.downloadImage('model.webp');
+      const modelName = isCompositePreview ? (slotAssignment['脸'] ?? '') : (previewCostume ?? '');
+      const charaId = parseInt(modelName.slice(0, 3), 10);
+      const entry = nameImportList.find((e) => e.import === charaId);
+      const firstName = entry ? entry.name_en.split(' ')[0] : modelName;
+      const parts = [firstName, selectedMotion, selectedExpression].filter(Boolean);
+      const fileName = safeDownloadFileName(parts.join('_')) + '.webp';
+      await currentPreview.downloadImage(fileName);
       setCopyStatus('截图已下载');
       window.setTimeout(() => setCopyStatus(''), 1800);
     } catch (e) {
       setCopyStatus(e instanceof Error ? e.message : '下载失败');
       window.setTimeout(() => setCopyStatus(''), 2200);
     }
-  }, [isCompositePreview, previewCostume]);
+  }, [isCompositePreview, previewCostume, slotAssignment, selectedMotion, selectedExpression, nameImportList]);
 
   const handleDownloadCostumeThumb = useCallback(async (name: string) => {
     const thumbUrl = costumeByAsset.get(name)?.thumbUrl;
