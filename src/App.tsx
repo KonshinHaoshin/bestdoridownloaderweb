@@ -175,17 +175,24 @@ function App() {
   }, [previewBuildData]);
 
   const compositeLayers = useMemo<CompositeLayerDraft[]>(() => {
-    const byModel = new Map<string, PartCategory[]>();
-    for (const cat of PART_CATEGORIES) {
-      const model = slotAssignment[cat];
-      if (!model || !selectedMap.has(model)) continue;
-      byModel.set(model, [...(byModel.get(model) ?? []), cat]);
+    // 按 PART_CATEGORIES 顺序（后发→身体→脸→帽子 = 底→顶）遍历，
+    // 相邻且同一模型的槽合并为一层，非相邻的拆成独立层。
+    const slots = PART_CATEGORIES
+      .filter((cat) => { const m = slotAssignment[cat]; return !!m && selectedMap.has(m); })
+      .map((cat) => ({ cat, model: slotAssignment[cat]! }));
+
+    const groups: { model: string; cats: PartCategory[] }[] = [];
+    for (const slot of slots) {
+      const last = groups[groups.length - 1];
+      if (last && last.model === slot.model) { last.cats.push(slot.cat); }
+      else { groups.push({ model: slot.model, cats: [slot.cat] }); }
     }
-    return Array.from(byModel.entries()).map(([modelName, partCategories]) => ({
-      layerId: modelName,
-      modelName,
-      buildData: selectedMap.get(modelName)!,
-      partCategories,
+
+    return groups.map(({ model, cats }, i) => ({
+      layerId: `${model}_${cats.join('_')}_${i}`,
+      modelName: model,
+      buildData: selectedMap.get(model)!,
+      partCategories: cats,
     }));
   }, [slotAssignment, selectedMap]);
 
