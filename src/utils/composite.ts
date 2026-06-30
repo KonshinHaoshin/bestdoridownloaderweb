@@ -43,6 +43,7 @@ const characterIdFromModelName = (modelName: string) => {
 
 const englishNameLastToken = (names: string[] = []) => {
   const englishName = names
+    .filter(Boolean)
     .map((name) => name.trim())
     .find((name) => /^[A-Za-z][A-Za-z .'-]* [A-Za-z][A-Za-z .'-]*$/.test(name));
   return englishName?.split(/\s+/).pop();
