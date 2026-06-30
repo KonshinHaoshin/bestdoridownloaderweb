@@ -96,6 +96,7 @@ function App() {
   const [selectedExpression, setSelectedExpression] = useState('');
   const [copyStatus, setCopyStatus] = useState('');
   const [nameImportList, setNameImportList] = useState<Array<{import: number; name_ja: string; name_en: string; name_zh: string}>>([]);
+  const [deformerData, setDeformerData] = useState<Record<string, {OriginX: number; OriginY: number}>>({});
   const [showImportTable, setShowImportTable] = useState(false);
   const [importSearch, setImportSearch] = useState('');
   const previewRef = useRef<Live2dPreviewHandle | null>(null);
@@ -237,6 +238,7 @@ function App() {
       });
       nameImportMap.current = nim;
     }).catch((e) => console.error('name_import load failed:', e));
+    fetch('/deformer_import.json').then((r) => r.json()).then(setDeformerData).catch(() => {});
     (async () => {
       try {
         const [r, a, c, cards] = await Promise.all([
@@ -446,7 +448,7 @@ function App() {
       const entry = nameImportList.find((e) => e.import === charaId);
       const charName = entry?.name_zh?.split(/\s/)[0] || (faceModel ?? '拼好模');
       const name = `${charName} 拼好模`;
-      await downloadWmdlZip(compositeLayers, compositePartIdCache.current, name, compositeImportValue);
+      await downloadWmdlZip(compositeLayers, compositePartIdCache.current, name, compositeImportValue, deformerData);
       setCompositeStatus('WMDL ZIP 已生成');
     } catch (e) {
       console.error('WMDL download failed:', e);
