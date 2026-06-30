@@ -247,7 +247,7 @@ export const prepareCompositeLayers = async (
     prepared.push({
       ...layer,
       index,
-      folderName: `layer_${String(index).padStart(2, '0')}_${safeSegment(layer.modelName)}_${safeSegment(layer.layerId)}`,
+      folderName: `${index + 1} ${layer.partCategories.length > 0 ? layer.partCategories.join('+') : safeSegment(layer.modelName)}`,
       selectorPrefix: getCompositeLayerSelectorPrefix(layer.modelName, layer.characterNames),
       initOpacities,
     });
@@ -281,23 +281,61 @@ export const downloadCompositeZip = async (
   importValue?: number
 ) => {
   if (layers.length === 0) return;
-
   const prepared = await prepareCompositeLayers(layers, partIdCache);
-  const manifest = buildCompositeManifest(prepared, importValue);
   const motionAssets = getCompositeMotionAssets(prepared);
   const expressionAssets = getCompositeExpressionAssets(prepared);
+  const manifest = buildCompositeManifest(prepared, importValue);
   const zip = new JSZip();
   const root = zip.folder('composite-model');
   if (!root) return;
 
   root.file('composite.jsonl', `${manifest.rawText}\n`);
-
+  await downloadSharedMtnExp(root, motionAssets, expressionAssets, importValue);
   for (const layer of prepared) {
     await addPreparedLayerToZip(root, layer, importValue, motionAssets, expressionAssets);
   }
 
   const content = await zip.generateAsync({ type: 'blob' });
   saveAs(content, 'composite-model.zip');
+};
+
+export const buildWmdlDocument = (layers: PreparedCompositeLayer[], name: string) => {
+  if (layers.length === 0) return null;
+  return {
+    name,
+    modelRelativePath: `model/${layers[0].folderName}/model.json`,
+    figureTemplate: `changeFigure:%conf_path% -id=${name}_0 -zIndex=0 %me_0%;`,
+    transformTemplate: `setTransform:%me_0% -target=${name}_0 -duration=750 -writeDefault;`,
+    subModels: layers.slice(1).map((l) => ({
+      modelRelativePath: `model/${l.folderName}/model.json`,
+      offsetX: 0, offsetY: 0,
+    })),
+    x: 0, y: 0, scale: 1, rotation: 0, reverseX: false,
+    live2dBounds: [0, 0, 0, 0],
+  };
+};
+
+export const downloadWmdlZip = async (
+  layers: CompositeLayerDraft[],
+  partIdCache: Map<string, string[]>,
+  name: string,
+  importValue?: number,
+) => {
+  if (layers.length === 0) return;
+  const prepared = await prepareCompositeLayers(layers, partIdCache);
+  const motionAssets = getCompositeMotionAssets(prepared);
+  const expressionAssets = getCompositeExpressionAssets(prepared);
+  const zip = new JSZip();
+  const wmdl = buildWmdlDocument(prepared, name);
+  if (wmdl) zip.file(`${name}.wmdl`, JSON.stringify(wmdl, null, '\t'));
+  const modelRoot = zip.folder('model');
+  if (!modelRoot) return;
+  await downloadSharedMtnExp(modelRoot, motionAssets, expressionAssets, importValue);
+  for (const layer of prepared) {
+    await addPreparedLayerToZip(modelRoot, layer, importValue, motionAssets, expressionAssets);
+  }
+  const content = await zip.generateAsync({ type: 'blob' });
+  saveAs(content, `${name}.zip`);
 };
 
 const addPreparedLayerToZip = async (
@@ -308,72 +346,24 @@ const addPreparedLayerToZip = async (
   expressionAssets: CompositeSelectorAsset[] = []
 ) => {
   const layerFolder = root.folder(layer.folderName);
-  const dataFolder = layerFolder?.folder('data');
-  if (!layerFolder || !dataFolder) return;
+  const charaFolder = layerFolder?.folder('.chara');
+  if (!layerFolder || !charaFolder) return;
 
-  const filesToDownload: { url: string; folder: JSZip; name: string; cleanAs?: 'motion' | 'expression' }[] = [
-    {
-      url: bundleAssetUrl(layer.buildData.model, 'model'),
-      folder: dataFolder,
-      name: 'model.moc',
-    },
-    {
-      url: bundleAssetUrl(layer.buildData.physics, 'physics'),
-      folder: dataFolder,
-      name: 'physics.json',
-    },
+  const filesToDownload: { url: string; folder: JSZip; name: string }[] = [
+    { url: bundleAssetUrl(layer.buildData.model, 'model'), folder: charaFolder, name: 'model.moc' },
+    { url: bundleAssetUrl(layer.buildData.physics, 'physics'), folder: charaFolder, name: 'physics.json' },
+    ...layer.buildData.textures.map((texture) => ({
+      url: bundleAssetUrl(texture, 'texture'),
+      folder: charaFolder,
+      name: normalizeTextureFileName(texture.fileName),
+    })),
   ];
-
-  const textureFolder = dataFolder.folder('textures');
-  if (textureFolder) {
-    layer.buildData.textures.forEach((texture) => {
-      filesToDownload.push({
-        url: bundleAssetUrl(texture, 'texture'),
-        folder: textureFolder,
-        name: normalizeTextureFileName(texture.fileName),
-      });
-    });
-  }
-
-  const motionFolder = dataFolder.folder('motions');
-  if (motionFolder) {
-    motionAssets.forEach(({ selector, asset }) => {
-      filesToDownload.push({
-        url: bundleAssetUrl(asset, 'motion'),
-        folder: motionFolder,
-        name: `${safeSelectorPath(selector)}.mtn`,
-        cleanAs: 'motion',
-      });
-    });
-  }
-
-  const expressionFolder = dataFolder.folder('expressions');
-  if (expressionFolder) {
-    expressionAssets.forEach(({ selector, asset }) => {
-      filesToDownload.push({
-        url: bundleAssetUrl(asset, 'expression'),
-        folder: expressionFolder,
-        name: `${safeSelectorPath(selector)}.exp.json`,
-        cleanAs: 'expression',
-      });
-    });
-  }
 
   await Promise.all(
     filesToDownload.map(async (file) => {
       try {
-        if (file.cleanAs === 'motion') {
-          const response = await axios.get(file.url, { responseType: 'text' });
-          const cleaned = stripImportFromMotionText(response.data as string);
-          file.folder.file(file.name, cleaned);
-        } else if (file.cleanAs === 'expression') {
-          const response = await axios.get(file.url, { responseType: 'json' });
-          const cleaned = stripImportFromExpressionJson(response.data) ?? {};
-          file.folder.file(file.name, JSON.stringify(cleaned));
-        } else {
-          const response = await axios.get(file.url, { responseType: 'blob' });
-          file.folder.file(file.name, response.data);
-        }
+        const response = await axios.get(file.url, { responseType: 'blob' });
+        file.folder.file(file.name, response.data);
       } catch (error) {
         console.error(`Failed to download ${file.url}`, error);
       }
@@ -382,7 +372,7 @@ const addPreparedLayerToZip = async (
 
   layerFolder.file(
     'model.json',
-    JSON.stringify(createDownloadModelJson(layer, importValue, motionAssets, expressionAssets), null, 2)
+    JSON.stringify(createDownloadModelJson(layer, importValue, motionAssets, expressionAssets), null, '\t')
   );
 };
 
@@ -392,44 +382,44 @@ const createDownloadModelJson = (
   motionAssets: CompositeSelectorAsset[] = [],
   expressionAssets: CompositeSelectorAsset[] = []
 ) => {
+  const importDir =
+    importValue !== undefined && Number.isFinite(importValue)
+      ? `PARAM_IMPORT__${importValue}`
+      : '__base__';
+
   const modelJson: Record<string, unknown> = {
     version: 'Sample 1.0.0',
     layout: { center_x: 0, center_y: 0, width: 2 },
     hit_areas_custom: {
-      head_x: [-0.25, 1],
-      head_y: [0.25, 0.2],
-      body_x: [-0.3, 0.2],
-      body_y: [0.3, -1.9],
+      head_x: [-0.25, 1], head_y: [0.25, 0.2],
+      body_x: [-0.3, 0.2], body_y: [0.3, -1.9],
     },
-    model: 'data/model.moc',
-    physics: 'data/physics.json',
-    textures: layer.buildData.textures.map(
-      (texture) => `data/textures/${normalizeTextureFileName(texture.fileName)}`
-    ),
+    model: '.chara/model.moc',
+    physics: '.chara/physics.json',
+    textures: layer.buildData.textures.map((t) => `.chara/${normalizeTextureFileName(t.fileName)}`),
     motions: motionAssets.reduce((acc: Record<string, Array<{ file: string }>>, { selector }) => {
-      acc[selector] = [{ file: `data/motions/${safeSelectorPath(selector)}.mtn` }];
+      acc[selector] = [{ file: `../.mtn_exp/motions/${importDir}/${safeSelectorPath(selector)}.mtn` }];
       return acc;
     }, {}),
     expressions: expressionAssets.map(({ selector }) => ({
       name: selector,
-      file: `data/expressions/${safeSelectorPath(selector)}.exp.json`,
+      file: `../.mtn_exp/expressions/__base__/${safeSelectorPath(selector)}.exp.json`,
     })),
   };
 
   if (layer.initOpacities?.length) {
     modelJson.init_opacities = layer.initOpacities.map(({ id, value }) => ({ id, value }));
   }
-
   if (importValue !== undefined && Number.isFinite(importValue)) {
     modelJson.init_params = [{ id: 'PARAM_IMPORT', value: importValue }];
   }
-
   return modelJson;
 };
 
 export const getCompositeMotionAssets = (layers: Array<Pick<CompositeLayerDraft, 'modelName' | 'buildData' | 'characterNames'>>) =>
   dedupeSelectorAssets(
     layers.flatMap((layer) => {
+      if (!layer.buildData?.motions) return [];
       const prefix = getCompositeLayerSelectorPrefix(layer.modelName, layer.characterNames);
       return layer.buildData.motions
         .map((motion) => ({
@@ -469,6 +459,44 @@ const dedupeSelectorAssets = (assets: CompositeSelectorAsset[]) => {
 
 const safeSelectorPath = (selector: string) =>
   selector.split('/').map(safeSegment).join('/');
+
+const downloadSharedMtnExp = async (
+  root: JSZip,
+  motionAssets: CompositeSelectorAsset[],
+  expressionAssets: CompositeSelectorAsset[],
+  importValue?: number,
+) => {
+  const mtnExpFolder = root.folder('.mtn_exp');
+  if (!mtnExpFolder) return;
+  const importDir =
+    importValue !== undefined && Number.isFinite(importValue)
+      ? `PARAM_IMPORT__${importValue}`
+      : '__base__';
+
+  await Promise.all([
+    ...motionAssets.map(async ({ selector, asset }) => {
+      const parts = safeSelectorPath(selector).split('/');
+      const fileName = `${parts.pop()}.mtn`;
+      const subfolder = parts.length ? mtnExpFolder.folder('motions')?.folder(importDir)?.folder(parts.join('/')) : mtnExpFolder.folder('motions')?.folder(importDir);
+      if (!subfolder) return;
+      try {
+        const response = await axios.get(bundleAssetUrl(asset, 'motion'), { responseType: 'text' });
+        subfolder.file(fileName, stripImportFromMotionText(response.data as string));
+      } catch (e) { console.error(`mtn download failed: ${selector}`, e); }
+    }),
+    ...expressionAssets.map(async ({ selector, asset }) => {
+      const parts = safeSelectorPath(selector).split('/');
+      const fileName = `${parts.pop()}.exp.json`;
+      const subfolder = parts.length ? mtnExpFolder.folder('expressions')?.folder('__base__')?.folder(parts.join('/')) : mtnExpFolder.folder('expressions')?.folder('__base__');
+      if (!subfolder) return;
+      try {
+        const response = await axios.get(bundleAssetUrl(asset, 'expression'), { responseType: 'json' });
+        const cleaned = stripImportFromExpressionJson(response.data) ?? {};
+        subfolder.file(fileName, JSON.stringify(cleaned));
+      } catch (e) { console.error(`exp download failed: ${selector}`, e); }
+    }),
+  ]);
+};
 
 const collectStringIds = (sources: unknown[], pattern: RegExp): string[] => {
   const ids = new Set<string>();
