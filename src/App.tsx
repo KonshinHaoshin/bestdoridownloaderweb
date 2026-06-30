@@ -5,7 +5,7 @@ import Live2dPreview, { Live2dPreviewHandle } from './components/Live2dPreview';
 import CompositeLive2dPreview, { CompositeLive2dPreviewHandle } from './components/CompositeLive2dPreview';
 import { getAssetsBase } from './config';
 import { downloadModelsAsZip } from './utils/zip';
-import { downloadCompositeZip, getCompositeExpressionOptions, getCompositeMotionOptions } from './utils/composite';
+import { downloadCompositeZip, downloadWmdlZip, getCompositeExpressionOptions, getCompositeMotionOptions } from './utils/composite';
 import { searchLive2dModels } from './utils/search';
 import { CUSTOM_CHARA_ROSTER } from './data/customCharacters';
 import { PART_CATEGORIES } from './data/partPresets';
@@ -436,6 +436,26 @@ function App() {
     }
   };
 
+  const handleDownloadWmdl = async () => {
+    if (compositeLayers.length === 0 || isDownloadingComposite) return;
+    setIsDownloadingComposite(true);
+    setCompositeStatus('正在生成 WMDL ZIP…');
+    try {
+      const faceModel = slotAssignment['脸'];
+      const charaId = faceModel ? parseInt(faceModel.slice(0, 3), 10) : NaN;
+      const entry = nameImportList.find((e) => e.import === charaId);
+      const charName = entry?.name_zh?.split(/\s/)[0] || (faceModel ?? '拼好模');
+      const name = `${charName} 拼好模`;
+      await downloadWmdlZip(compositeLayers, compositePartIdCache.current, name, compositeImportValue);
+      setCompositeStatus('WMDL ZIP 已生成');
+    } catch (e) {
+      console.error('WMDL download failed:', e);
+      setCompositeStatus(e instanceof Error ? e.message : 'WMDL ZIP 生成失败');
+    } finally {
+      setIsDownloadingComposite(false);
+    }
+  };
+
   const switchMode = (next: AppMode) => {
     if (next === mode) return;
     setMode(next);
@@ -512,16 +532,17 @@ function App() {
           </div>
           <button
             type="submit"
-            className="px-8 py-4 bg-yellow-300 text-black font-black text-base hover:bg-zinc-100 active:scale-95 transition-all"
+            className="shrink-0 px-4 sm:px-8 py-4 bg-yellow-300 text-black font-black text-base hover:bg-zinc-100 active:scale-95 transition-all"
           >
-            搜索
+            <Search className="w-5 h-5 sm:hidden" />
+            <span className="hidden sm:inline">搜索</span>
           </button>
           <button
             type="button"
             onClick={() => { setShowImportTable(true); setImportSearch(''); }}
-            className="px-5 py-4 border-2 border-zinc-300 bg-white font-bold text-sm text-zinc-500 hover:text-amber-600 hover:border-yellow-300 transition-all whitespace-nowrap"
+            className="shrink-0 px-3 sm:px-5 py-4 border-2 border-zinc-300 bg-white font-bold text-xs sm:text-sm text-zinc-500 hover:text-amber-600 hover:border-yellow-300 transition-all whitespace-nowrap"
           >
-            角色ID表
+            ID表
           </button>
         </form>
       </div>
@@ -811,7 +832,7 @@ function App() {
                 )}
                 <span className="text-[10px] text-zinc-400">写入 composite.jsonl summary</span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={handlePreviewComposite}
                   disabled={anyDownloading || compositeLayers.length === 0}
@@ -823,10 +844,18 @@ function App() {
                 <button
                   onClick={handleDownloadComposite}
                   disabled={anyDownloading || compositeLayers.length === 0}
-                  className="py-2.5 border-2 border-yellow-300 bg-yellow-300 text-black font-bold text-sm flex items-center justify-center gap-2 hover:bg-zinc-100 disabled:opacity-40 transition-all"
+                  className="py-2.5 border border-zinc-300 bg-white text-xs font-bold text-zinc-700 flex items-center justify-center gap-1 hover:bg-zinc-100 disabled:opacity-40 transition-all"
                 >
-                  {isDownloadingComposite ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  下载 ZIP
+                  {isDownloadingComposite ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  JSONL
+                </button>
+                <button
+                  onClick={handleDownloadWmdl}
+                  disabled={anyDownloading || compositeLayers.length === 0}
+                  className="py-2.5 border-2 border-yellow-300 bg-yellow-300 text-black text-xs font-bold flex items-center justify-center gap-1 hover:bg-zinc-100 disabled:opacity-40 transition-all"
+                >
+                  {isDownloadingComposite ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  WMDL
                 </button>
               </div>
               {compositeStatus && <p className="text-xs font-bold text-zinc-600 mt-2">{compositeStatus}</p>}
