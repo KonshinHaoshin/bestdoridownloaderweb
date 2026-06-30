@@ -259,14 +259,13 @@ export const prepareCompositeLayers = async (
 
 export const buildCompositeManifest = (layers: PreparedCompositeLayer[], importValue?: number): CompositeManifest => {
   const parts = layers.map((layer) => ({
-    path: `${layer.folderName}/model.json`,
-    id: layer.selectorPrefix,
-    folder: layer.folderName,
     index: layer.index,
+    id: layer.selectorPrefix,
+    path: `${layer.folderName}/model.json`,
+    folder: layer.folderName,
   }));
 
   const summary: CompositeSummary = {
-    version: 2,
     motions: getCompositeMotionOptions(layers),
     expressions: getCompositeExpressionOptions(layers),
     import: importValue,
@@ -300,18 +299,55 @@ export const downloadCompositeZip = async (
   saveAs(content, 'composite-model.zip');
 };
 
-export const buildWmdlDocument = (layers: PreparedCompositeLayer[], name: string) => {
+const WMDL_SCALE_Y = 1440 / 2000; // Live2D canvas → WebGAL canvas Y mapping
+
+const getLayerDeformerDelta = (
+  modelName: string,
+  targetImportId: number,
+  deformerData: Record<string, { OriginX: number; OriginY: number }>,
+) => {
+  const rowId = parseInt(modelName.slice(0, 3), 10);
+  const row = deformerData[String(rowId)];
+  const target = deformerData[String(targetImportId)];
+  if (!row || !target) return { x: 0, y: 0 };
+  return {
+    x: target.OriginX - row.OriginX,
+    y: (target.OriginY - row.OriginY) * WMDL_SCALE_Y,
+  };
+};
+
+export const buildWmdlDocument = (
+  layers: PreparedCompositeLayer[],
+  name: string,
+  importValue?: number,
+  deformerData: Record<string, { OriginX: number; OriginY: number }> = {},
+) => {
   if (layers.length === 0) return null;
+
+  const mainDelta = importValue !== undefined && Number.isFinite(importValue)
+    ? getLayerDeformerDelta(layers[0].modelName, importValue, deformerData)
+    : { x: 0, y: 0 };
+
   return {
     name,
     modelRelativePath: `model/${layers[0].folderName}/model.json`,
     figureTemplate: `changeFigure:%conf_path% -id=${name}_0 -zIndex=0 %me_0%;`,
     transformTemplate: `setTransform:%me_0% -target=${name}_0 -duration=750 -writeDefault;`,
-    subModels: layers.slice(1).map((l) => ({
-      modelRelativePath: `model/${l.folderName}/model.json`,
-      offsetX: 0, offsetY: 0,
-    })),
-    x: 0, y: 0, scale: 1, rotation: 0, reverseX: false,
+    subModels: layers.slice(1).map((l) => {
+      const d = importValue !== undefined && Number.isFinite(importValue)
+        ? getLayerDeformerDelta(l.modelName, importValue, deformerData)
+        : { x: 0, y: 0 };
+      return {
+        modelRelativePath: `model/${l.folderName}/model.json`,
+        offsetX: d.x - mainDelta.x,
+        offsetY: d.y - mainDelta.y,
+      };
+    }),
+    x: mainDelta.x,
+    y: mainDelta.y,
+    scale: 1,
+    rotation: 0,
+    reverseX: false,
     live2dBounds: [0, 0, 0, 0],
   };
 };
@@ -321,13 +357,14 @@ export const downloadWmdlZip = async (
   partIdCache: Map<string, string[]>,
   name: string,
   importValue?: number,
+  deformerData: Record<string, { OriginX: number; OriginY: number }> = {},
 ) => {
   if (layers.length === 0) return;
   const prepared = await prepareCompositeLayers(layers, partIdCache);
   const motionAssets = getCompositeMotionAssets(prepared);
   const expressionAssets = getCompositeExpressionAssets(prepared);
   const zip = new JSZip();
-  const wmdl = buildWmdlDocument(prepared, name);
+  const wmdl = buildWmdlDocument(prepared, name, importValue, deformerData);
   if (wmdl) zip.file(`${name}.wmdl`, JSON.stringify(wmdl, null, '\t'));
   const modelRoot = zip.folder('model');
   if (!modelRoot) return;
