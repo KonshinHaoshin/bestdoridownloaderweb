@@ -3,23 +3,26 @@ import { BuildData, CardMap, CharaRoster, CostumeMap } from '../types';
 import { getApiBase, getAssetsBase } from '../config';
 import { bundleAssetUrl } from '../utils/assets';
 
+const noCacheUrl = (url: string) =>
+  `${url}${url.includes('?') ? '&' : '?'}_=${Date.now()}`;
+
 export const fetchCharaRoster = async (): Promise<CharaRoster> => {
-  const response = await axios.get(`${getApiBase()}/characters/all.2.json`);
+  const response = await axios.get(noCacheUrl(`${getApiBase()}/characters/all.2.json`));
   return response.data;
 };
 
 export const fetchAssetsIndex = async (): Promise<any> => {
-  const response = await axios.get(`${getApiBase()}/explorer/jp/assets/_info.json`);
+  const response = await axios.get(noCacheUrl(`${getApiBase()}/explorer/jp/assets/_info.json`));
   return response.data;
 };
 
 export const fetchCostumes = async (): Promise<CostumeMap> => {
-  const response = await axios.get(`${getApiBase()}/costumes/all.5.json`);
+  const response = await axios.get(noCacheUrl(`${getApiBase()}/costumes/all.5.json`));
   return response.data;
 };
 
 export const fetchCards = async (): Promise<CardMap> => {
-  const response = await axios.get(`${getApiBase()}/cards/all.5.json`);
+  const response = await axios.get(noCacheUrl(`${getApiBase()}/cards/all.5.json`));
   return response.data;
 };
 

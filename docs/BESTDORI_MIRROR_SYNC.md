@@ -65,6 +65,18 @@ server {
 
   root /var/www/bestdori-live2d/dist;
 
+  location /mirror/bestdori-api/ {
+    alias /srv/bestdori-mirror/bestdori-api/;
+    add_header Cache-Control "no-cache";
+    try_files $uri =404;
+  }
+
+  location = /mirror/manifest.json {
+    alias /srv/bestdori-mirror/manifest.json;
+    add_header Cache-Control "no-cache";
+    try_files $uri =404;
+  }
+
   location /mirror/ {
     alias /srv/bestdori-mirror/;
     add_header Cache-Control "public, max-age=2592000";
