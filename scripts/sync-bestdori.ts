@@ -460,6 +460,7 @@ async function main() {
     scope: options.scope,
     dryRun: options.dryRun,
     live2dModels: syncedModels.length,
+    live2dModelNames: Array.from(new Set(syncedModels)).sort(),
     buildDataFiles: buildDataCounts,
     files: {
       unique: dedupedTasks.length,

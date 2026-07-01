@@ -9,9 +9,16 @@ import { downloadCompositeZip, downloadWmdlZip, getCompositeExpressionOptions, g
 import { searchLive2dModels } from './utils/search';
 import { CUSTOM_CHARA_ROSTER } from './data/customCharacters';
 import { PART_CATEGORIES } from './data/partPresets';
-import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Copy, Layers3, Boxes } from 'lucide-react';
+import { Search, Download, Eye, Loader2, Sparkles, User, Package, CheckCircle2, X, HardDrive, FileBox, Copy, Layers3, Boxes, BookOpen, ArrowLeft } from 'lucide-react';
 
 type AppMode = 'download' | 'composite';
+
+type AppRoute = 'tool' | 'api';
+
+const getHashRoute = (): AppRoute => {
+  const hash = window.location.hash;
+  return hash === '#/api' || hash.startsWith('#api-') ? 'api' : 'tool';
+};
 
 const safeDownloadFileName = (value: string) => value.replace(/[\\/:*?"<>|]+/g, '_');
 
@@ -57,6 +64,10 @@ type CostumeAssetInfo = {
 type PartAssignment = Record<PartCategory, string | null>;
 const EMPTY_ASSIGNMENT: PartAssignment = { 后发: null, 身体: null, 脸: null, 帽子: null };
 
+type MirrorManifest = {
+  live2dModelNames?: string[];
+};
+
 const compactStrings = (values?: Array<string | null>) => (values || []).filter(Boolean) as string[];
 const normalizeApiText = (value: string) => value.normalize('NFKC').trim().toLowerCase();
 
@@ -76,7 +87,218 @@ const cardMatchesCostume = (card: CardInfo, costume: CostumeInfo) =>
 
 const cardLabel = (card: CardInfo) => compactStrings(card.prefix)[3] || compactStrings(card.prefix)[1] || compactStrings(card.prefix)[0] || card.resourceSetName;
 
-function App() {
+const fetchMirrorManifest = async (): Promise<MirrorManifest | null> => {
+  try {
+    const response = await fetch(`/mirror/manifest.json?_=${Date.now()}`, { cache: 'no-store' });
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    return null;
+  }
+};
+
+const mergeAssetsIndexWithMirrorManifest = (assetsIndex: any, manifest: MirrorManifest | null) => {
+  const modelNames = manifest?.live2dModelNames?.filter(Boolean) || [];
+  if (modelNames.length === 0) return assetsIndex;
+
+  const live2d = assetsIndex?.live2d || {};
+  const chara = { ...(live2d.chara || {}) };
+  modelNames.forEach((modelName) => {
+    if (!modelName.endsWith('general')) chara[modelName] = chara[modelName] || {};
+  });
+
+  return {
+    ...assetsIndex,
+    live2d: {
+      ...live2d,
+      chara,
+    },
+  };
+};
+
+const normalizeExactModelQuery = (value: string) => {
+  const modelName = value.trim().replace(/_rip$/i, '');
+  return /^\d{3}_[a-z0-9][a-z0-9_-]*$/i.test(modelName) ? modelName : '';
+};
+
+const apiSections = [
+  { id: 'api-overview', label: '概览' },
+  { id: 'api-endpoints', label: '端点' },
+  { id: 'api-workflow', label: '调用流程' },
+  { id: 'api-examples', label: '示例' },
+  { id: 'api-notes', label: '约束' },
+];
+
+const CodeBlock = ({ children }: { children: string }) => (
+  <pre className="overflow-x-auto rounded border border-zinc-200 bg-zinc-950 p-4 text-xs leading-6 text-zinc-100">
+    <code>{children}</code>
+  </pre>
+);
+
+const EndpointRow = ({ method = 'GET', path, desc }: { method?: string; path: string; desc: string }) => (
+  <tr className="border-t border-zinc-200">
+    <td className="whitespace-nowrap px-3 py-3 text-xs font-black text-amber-700">{method}</td>
+    <td className="px-3 py-3 font-mono text-xs text-zinc-900">{path}</td>
+    <td className="px-3 py-3 text-sm text-zinc-600">{desc}</td>
+  </tr>
+);
+
+const ApiDocsPage = () => (
+  <div className="min-h-screen bg-white text-zinc-900 font-mono">
+    <header className="border-b-2 border-yellow-300 bg-white">
+      <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-8 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="mb-3 inline-flex items-center gap-2 border border-zinc-300 bg-zinc-100 px-3 py-1 text-[11px] font-black uppercase tracking-widest text-amber-700">
+            <BookOpen className="h-3.5 w-3.5" />
+            Public API
+          </div>
+          <h1 className="text-4xl font-black uppercase tracking-tight md:text-6xl">Live2D Mirror API</h1>
+          <p className="mt-3 max-w-2xl text-sm text-zinc-500">
+            给第三方制作工具调用的静态镜像接口文档。当前版本只承诺 `/mirror` 下的 Bestdori API 镜像和 Live2D 资源文件。
+          </p>
+        </div>
+        <a
+          href="#/"
+          className="inline-flex items-center justify-center gap-2 border-2 border-zinc-300 bg-white px-4 py-3 text-sm font-bold text-zinc-700 transition-colors hover:border-yellow-300 hover:text-amber-700"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          返回工具
+        </a>
+      </div>
+    </header>
+
+    <main className="mx-auto grid max-w-7xl grid-cols-1 gap-8 px-4 py-8 lg:grid-cols-[220px_1fr]">
+      <aside className="lg:sticky lg:top-6 lg:self-start">
+        <nav className="rounded border border-zinc-200 bg-zinc-50 p-3">
+          {apiSections.map((section) => (
+            <a
+              key={section.id}
+              href={`#${section.id}`}
+              className="block rounded px-3 py-2 text-sm font-bold text-zinc-600 hover:bg-white hover:text-amber-700"
+            >
+              {section.label}
+            </a>
+          ))}
+        </nav>
+      </aside>
+
+      <article className="min-w-0 space-y-10">
+        <section id="api-overview" className="scroll-mt-8">
+          <h2 className="mb-3 text-2xl font-black">概览</h2>
+          <div className="rounded border border-zinc-200 bg-white p-5 text-sm leading-7 text-zinc-600">
+            <p>
+              API 是静态文件服务，不需要鉴权。第三方工具应先读取索引，再按 `buildData.asset` 中的
+              `Base` 字段下载模型、贴图、动作、表情和物理文件。
+            </p>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="border border-zinc-200 bg-zinc-50 p-4">
+                <div className="text-xs font-black uppercase text-zinc-500">API Base</div>
+                <div className="mt-1 font-mono text-sm text-zinc-900">/mirror/bestdori-api</div>
+              </div>
+              <div className="border border-zinc-200 bg-zinc-50 p-4">
+                <div className="text-xs font-black uppercase text-zinc-500">Assets Base</div>
+                <div className="mt-1 font-mono text-sm text-zinc-900">/mirror/bestdori-assets</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="api-endpoints" className="scroll-mt-8">
+          <h2 className="mb-3 text-2xl font-black">端点</h2>
+          <div className="overflow-hidden rounded border border-zinc-200 bg-white">
+            <table className="w-full border-collapse text-left">
+              <thead className="bg-zinc-100 text-xs uppercase text-zinc-500">
+                <tr>
+                  <th className="px-3 py-3">Method</th>
+                  <th className="px-3 py-3">Path</th>
+                  <th className="px-3 py-3">说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <EndpointRow path="/mirror/manifest.json" desc="镜像元信息：生成时间、同步范围、文件统计、实际同步的模型名列表。" />
+                <EndpointRow path="/mirror/bestdori-api/characters/all.2.json" desc="角色基础信息。" />
+                <EndpointRow path="/mirror/bestdori-api/explorer/jp/assets/_info.json" desc="Bestdori 资源索引，可枚举 live2d.chara 模型名。" />
+                <EndpointRow path="/mirror/bestdori-api/costumes/all.5.json" desc="服装数据，包含 assetBundleName 和多语言描述。" />
+                <EndpointRow path="/mirror/bestdori-api/cards/all.5.json" desc="卡面数据，可关联服装资源。" />
+                <EndpointRow path="/mirror/bestdori-assets/jp/live2d/chara/{modelName}_rip/buildData.asset" desc="单个 Live2D 模型的资源清单。真实 payload 位于 response.data.Base。" />
+                <EndpointRow path="/mirror/bestdori-assets/{bundleName}/{fileName}" desc="模型、贴图、动作、表情、物理文件。bundleName/fileName 来自 buildData.asset。" />
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="api-workflow" className="scroll-mt-8">
+          <h2 className="mb-3 text-2xl font-black">调用流程</h2>
+          <ol className="space-y-3 text-sm leading-7 text-zinc-600">
+            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">1.</strong> 读取 `/mirror/manifest.json`，优先使用 `live2dModelNames` 获取镜像内实际存在的模型。</li>
+            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">2.</strong> 需要角色、服装搜索时，再读取 characters、costumes 和 `_info.json` 做本地索引。</li>
+            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">3.</strong> 对目标 `modelName` 请求 `buildData.asset`，取 `Base`。</li>
+            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">4.</strong> 对 `Base.model / physics / textures / motions / expressions` 中的每个条目拼接资源 URL 并下载。</li>
+          </ol>
+        </section>
+
+        <section id="api-examples" className="scroll-mt-8">
+          <h2 className="mb-3 text-2xl font-black">TypeScript 示例</h2>
+          <CodeBlock>{`type BundleFile = { bundleName: string; fileName: string };
+type BuildData = {
+  model: BundleFile;
+  physics: BundleFile;
+  textures: BundleFile[];
+  motions: BundleFile[];
+  expressions: BundleFile[];
+};
+
+const API_BASE = '/mirror/bestdori-api';
+const ASSETS_BASE = '/mirror/bestdori-assets';
+
+const assetUrl = (file: BundleFile) =>
+  \`\${ASSETS_BASE}/\${file.bundleName}/\${file.fileName.replace(/\\.bytes$/, '')}\`;
+
+async function fetchBuildData(modelName: string): Promise<BuildData> {
+  const res = await fetch(
+    \`\${ASSETS_BASE}/jp/live2d/chara/\${modelName}_rip/buildData.asset\`,
+  );
+  if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
+  const json = await res.json();
+  return json.Base;
+}
+
+async function listMirroredModels(): Promise<string[]> {
+  const res = await fetch('/mirror/manifest.json', { cache: 'no-store' });
+  const manifest = await res.json();
+  return manifest.live2dModelNames ?? [];
+}
+
+async function getModelFiles(modelName: string) {
+  const data = await fetchBuildData(modelName);
+  return [
+    assetUrl(data.model),
+    assetUrl(data.physics),
+    ...data.textures.map(assetUrl),
+    ...data.motions.map(assetUrl),
+    ...data.expressions.map(assetUrl),
+  ];
+}`}</CodeBlock>
+        </section>
+
+        <section id="api-notes" className="scroll-mt-8">
+          <h2 className="mb-3 text-2xl font-black">约束与缓存</h2>
+          <div className="rounded border border-zinc-200 bg-white p-5 text-sm leading-7 text-zinc-600">
+            <ul className="list-disc space-y-2 pl-5">
+              <li>这是静态镜像，不承诺实时同步 Bestdori 源站；以 `manifest.generatedAt` 判断新鲜度。</li>
+              <li>`manifest.json` 和 `/mirror/bestdori-api/*` 应使用 `no-cache`，避免搜索索引滞后。</li>
+              <li>`/mirror/bestdori-assets/*` 可长缓存；文件内容通常按资源名稳定保存。</li>
+              <li>当前工具链只面向 Cubism 2 Live2D。第三方工具不应假设 Cubism 4 可用。</li>
+              <li>资源文件名应以 `buildData.asset.Base` 为准，不要硬编码动作、表情或贴图路径。</li>
+            </ul>
+          </div>
+        </section>
+      </article>
+    </main>
+  </div>
+);
+
+function ExplorerApp() {
   const [roster, setRoster] = useState<CharaRoster | null>(null);
   const [assetsIndex, setAssetsIndex] = useState<any>(null);
   const [costumeMap, setCostumeMap] = useState<CostumeMap | null>(null);
@@ -241,11 +463,11 @@ function App() {
     fetch('/deformer_import.json').then((r) => r.json()).then(setDeformerData).catch(() => {});
     (async () => {
       try {
-        const [r, a, c, cards] = await Promise.all([
-          fetchCharaRoster(), fetchAssetsIndex(), fetchCostumes(), fetchCards(),
+        const [r, a, c, cards, manifest] = await Promise.all([
+          fetchCharaRoster(), fetchAssetsIndex(), fetchCostumes(), fetchCards(), fetchMirrorManifest(),
         ]);
         setRoster({ ...r, ...CUSTOM_CHARA_ROSTER });
-        setAssetsIndex(a);
+        setAssetsIndex(mergeAssetsIndexWithMirrorManifest(a, manifest));
         setCostumeMap(c);
         setCardMap(cards);
       } catch (e) {
@@ -254,11 +476,30 @@ function App() {
     })();
   }, []);
 
-  const performSearch = (term: string) => {
+  const performSearch = async (term: string) => {
     if (!roster || !term.trim()) return;
     const assets = assetsIndex?.live2d?.chara || {};
     const result = searchLive2dModels({ roster, assets, costumeByAsset, query: term.trim() });
-    if (!result) { setMatchedCharaName(''); setCostumes([]); setPreviewCostume(null); setPreviewBuildData(null); return; }
+    if (!result) {
+      const exactModelName = normalizeExactModelQuery(term);
+      if (exactModelName) {
+        try {
+          const data = await getCachedBuildData(exactModelName);
+          if (data?.model) {
+            setMatchedCharaName(`${exactModelName}（本地 mirror）`);
+            setCostumes([exactModelName]);
+            setPreviewCostume(null);
+            setPreviewBuildData(null);
+            return;
+          }
+        } catch {}
+      }
+      setMatchedCharaName('');
+      setCostumes([]);
+      setPreviewCostume(null);
+      setPreviewBuildData(null);
+      return;
+    }
     setMatchedCharaName(result.label);
     setCostumes(result.models);
     setPreviewCostume(null);
@@ -270,7 +511,7 @@ function App() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    performSearch(searchTerm);
+    void performSearch(searchTerm);
   };
 
   // Toggle preview
@@ -487,6 +728,15 @@ function App() {
         <p className="text-zinc-500 text-xs tracking-widest uppercase mt-3 mb-6">
           搜索、预览、打包下载 BanG Dream! Live2D 模型
         </p>
+        <div className="mb-5">
+          <a
+            href="#/api"
+            className="inline-flex items-center gap-2 border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-zinc-500 transition-colors hover:border-yellow-300 hover:text-amber-700"
+          >
+            <BookOpen className="h-4 w-4" />
+            API 文档
+          </a>
+        </div>
 
         {/* Mode segmented control */}
         <div className="inline-flex border-2 border-zinc-300 bg-zinc-100 p-1 gap-1">
@@ -1090,7 +1340,7 @@ function App() {
                         <td className="px-4 py-2 text-zinc-400">{e.name_en}</td>
                         <td className="px-2 py-1">
                           <button
-                            onClick={() => { setSearchTerm(e.name_zh); performSearch(e.name_zh); setShowImportTable(false); }}
+                            onClick={() => { setSearchTerm(e.name_zh); void performSearch(e.name_zh); setShowImportTable(false); }}
                             title="查看立绘"
                             className="px-2 py-1 text-[10px] font-bold border border-zinc-300 hover:border-amber-500 hover:text-amber-600 transition-colors"
                           >
@@ -1107,6 +1357,18 @@ function App() {
       )}
     </div>
   );
+}
+
+function App() {
+  const [route, setRoute] = useState<AppRoute>(() => getHashRoute());
+
+  useEffect(() => {
+    const syncRoute = () => setRoute(getHashRoute());
+    window.addEventListener('hashchange', syncRoute);
+    return () => window.removeEventListener('hashchange', syncRoute);
+  }, []);
+
+  return route === 'api' ? <ApiDocsPage /> : <ExplorerApp />;
 }
 
 export default App;
