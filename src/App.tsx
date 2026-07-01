@@ -221,7 +221,7 @@ const ApiDocsPage = () => (
                 <EndpointRow path="/mirror/bestdori-api/costumes/all.5.json" desc="服装数据，包含 assetBundleName 和多语言描述。" />
                 <EndpointRow path="/mirror/bestdori-api/cards/all.5.json" desc="卡面数据，可关联服装资源。" />
                 <EndpointRow path="/mirror/bestdori-assets/jp/live2d/chara/{modelName}_rip/buildData.asset" desc="单个 Live2D 模型的资源清单。真实 payload 位于 response.data.Base。" />
-                <EndpointRow path="/mirror/bestdori-assets/{bundleName}/{fileName}" desc="模型、贴图、动作、表情、物理文件。bundleName/fileName 来自 buildData.asset。" />
+                <EndpointRow path="/mirror/bestdori-assets/jp/{bundleName}_rip/{fileName}" desc="模型、贴图、动作、表情、物理文件。bundleName/fileName 来自 buildData.asset，部分 fileName 需要按类型规范化。" />
               </tbody>
             </table>
           </div>
@@ -251,8 +251,21 @@ type BuildData = {
 const API_BASE = '/mirror/bestdori-api';
 const ASSETS_BASE = '/mirror/bestdori-assets';
 
-const assetUrl = (file: BundleFile) =>
-  \`\${ASSETS_BASE}/\${file.bundleName}/\${file.fileName.replace(/\\.bytes$/, '')}\`;
+type BundleKind = 'model' | 'physics' | 'texture' | 'motion' | 'expression';
+
+const normalizeFileName = (fileName: string, kind: BundleKind) => {
+  if (kind === 'model' || kind === 'motion') return fileName.replace(/\\.bytes$/, '');
+  if (kind === 'texture') {
+    if (fileName.endsWith('.bytes')) return fileName.replace(/\\.bytes$/, '.png');
+    return fileName.includes('.') ? fileName : \`\${fileName}.png\`;
+  }
+  return fileName;
+};
+
+const assetUrl = (file: BundleFile, kind: BundleKind) => {
+  const fileName = normalizeFileName(file.fileName, kind);
+  return \`\${ASSETS_BASE}/jp/\${file.bundleName}_rip/\${fileName}\`;
+};
 
 async function fetchBuildData(modelName: string): Promise<BuildData> {
   const res = await fetch(
