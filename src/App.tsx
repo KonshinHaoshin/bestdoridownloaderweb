@@ -124,9 +124,7 @@ const normalizeExactModelQuery = (value: string) => {
 const apiSections = [
   { id: 'api-overview', label: '概览' },
   { id: 'api-endpoints', label: '端点' },
-  { id: 'api-workflow', label: '调用流程' },
   { id: 'api-examples', label: '示例' },
-  { id: 'api-notes', label: '约束' },
 ];
 
 const CodeBlock = ({ children }: { children: string }) => (
@@ -154,7 +152,7 @@ const ApiDocsPage = () => (
           </div>
           <h1 className="text-4xl font-black uppercase tracking-tight md:text-6xl">Live2D Mirror API</h1>
           <p className="mt-3 max-w-2xl text-sm text-zinc-500">
-            给第三方制作工具调用的静态镜像接口文档。当前版本只承诺 `/mirror` 下的 Bestdori API 镜像和 Live2D 资源文件。
+            给第三方制作工具调用的静态镜像接口文档。
           </p>
         </div>
         <a
@@ -227,16 +225,6 @@ const ApiDocsPage = () => (
           </div>
         </section>
 
-        <section id="api-workflow" className="scroll-mt-8">
-          <h2 className="mb-3 text-2xl font-black">调用流程</h2>
-          <ol className="space-y-3 text-sm leading-7 text-zinc-600">
-            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">1.</strong> 读取 `/mirror/manifest.json`，优先使用 `live2dModelNames` 获取镜像内实际存在的模型。</li>
-            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">2.</strong> 需要角色、服装搜索时，再读取 characters、costumes 和 `_info.json` 做本地索引。</li>
-            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">3.</strong> 对目标 `modelName` 请求 `buildData.asset`，取 `Base`。</li>
-            <li className="rounded border border-zinc-200 bg-white p-4"><strong className="text-zinc-900">4.</strong> 对 `Base.model / physics / textures / motions / expressions` 中的每个条目拼接资源 URL 并下载。</li>
-          </ol>
-        </section>
-
         <section id="api-examples" className="scroll-mt-8">
           <h2 className="mb-3 text-2xl font-black">TypeScript 示例</h2>
           <CodeBlock>{`type BundleFile = { bundleName: string; fileName: string };
@@ -285,26 +273,13 @@ async function listMirroredModels(): Promise<string[]> {
 async function getModelFiles(modelName: string) {
   const data = await fetchBuildData(modelName);
   return [
-    assetUrl(data.model),
-    assetUrl(data.physics),
-    ...data.textures.map(assetUrl),
-    ...data.motions.map(assetUrl),
-    ...data.expressions.map(assetUrl),
+    assetUrl(data.model, 'model'),
+    assetUrl(data.physics, 'physics'),
+    ...data.textures.map((file) => assetUrl(file, 'texture')),
+    ...data.motions.map((file) => assetUrl(file, 'motion')),
+    ...data.expressions.map((file) => assetUrl(file, 'expression')),
   ];
 }`}</CodeBlock>
-        </section>
-
-        <section id="api-notes" className="scroll-mt-8">
-          <h2 className="mb-3 text-2xl font-black">约束与缓存</h2>
-          <div className="rounded border border-zinc-200 bg-white p-5 text-sm leading-7 text-zinc-600">
-            <ul className="list-disc space-y-2 pl-5">
-              <li>这是静态镜像，不承诺实时同步 Bestdori 源站；以 `manifest.generatedAt` 判断新鲜度。</li>
-              <li>`manifest.json` 和 `/mirror/bestdori-api/*` 应使用 `no-cache`，避免搜索索引滞后。</li>
-              <li>`/mirror/bestdori-assets/*` 可长缓存；文件内容通常按资源名稳定保存。</li>
-              <li>当前工具链只面向 Cubism 2 Live2D。第三方工具不应假设 Cubism 4 可用。</li>
-              <li>资源文件名应以 `buildData.asset.Base` 为准，不要硬编码动作、表情或贴图路径。</li>
-            </ul>
-          </div>
         </section>
       </article>
     </main>
